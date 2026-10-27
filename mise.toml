@@ -1,0 +1,40 @@
+# omarchy-plugin-gate — tasks
+
+# Install / update the command, reviewer agent and nightly timer.
+[tasks.install]
+description = "Install the command, reviewer agent and nightly timer for this user"
+run = "scripts/install.sh"
+
+[tasks."install:no-timer"]
+description = "Install without enabling the nightly check"
+run = "scripts/install.sh --no-timer"
+
+[tasks.uninstall]
+description = "Remove the command, agent and timer (keeps clones and evidence)"
+run = "scripts/uninstall.sh"
+
+# Day to day.
+[tasks.check]
+description = "Review upstream changes for every cloned plugin"
+run = "bin/omarchy-plugin-gate check"
+
+[tasks.update]
+description = "Apply approved commits to the installed plugins"
+run = "bin/omarchy-plugin-gate update"
+
+[tasks.status]
+description = "Show installed, approved, upstream and held state"
+run = "bin/omarchy-plugin-gate status"
+
+[tasks.doctor]
+description = "Verify the wiring; pass --fix to install missing hooks"
+run = "bin/omarchy-plugin-gate doctor"
+
+# Development.
+[tasks.test]
+description = "Run the fixture suite (no network, no real install)"
+run = "tests/run"
+
+[tasks.lint]
+description = "Syntax-check every shell file"
+run = "bash -n bin/omarchy-plugin-gate scripts/install.sh scripts/uninstall.sh tests/run"

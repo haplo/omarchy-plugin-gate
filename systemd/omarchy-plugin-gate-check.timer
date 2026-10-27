@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Omarchy plugin update review
+
+[Timer]
+OnCalendar=*-*-* 09:00
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
