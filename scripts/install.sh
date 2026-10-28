@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Install omarchy-plugin-gate for the current user.
 #
-# Symlinks the command into ~/.local/bin, renders the reviewer agent with this
-# machine's state path, installs the systemd user units, and enables the nightly
+# Symlinks the command into ~/.local/bin, installs the reviewer agent and the
+# systemd user units, and enables the nightly
 # check. Idempotent: run it again after pulling changes.
 
 set -euo pipefail
@@ -53,9 +53,9 @@ fi
 chmod 755 "$REPO/bin/omarchy-plugin-gate"
 ln -sfn "$REPO/bin/omarchy-plugin-gate" "$BIN_DIR/omarchy-plugin-gate"
 
-# The reviewer may only read the gate's state directory, so render the real
-# path into the agent. Re-run this script if the state location changes.
-sed "s#@STATE_DIR@#$STATE_DIR#g" "$REPO/agents/plugin-reviewer.md.in" >"$AGENT_FILE"
+# The agent's scope comes from the directory the gate runs it in, so the
+# template is installed as is. Re-run this script after changing it.
+cp "$REPO/agents/plugin-reviewer.md.in" "$AGENT_FILE"
 
 for unit in omarchy-plugin-gate-check.service omarchy-plugin-gate-check.timer; do
   sed "s#%h/.local/bin/omarchy-plugin-gate#$BIN_DIR/omarchy-plugin-gate#g" \

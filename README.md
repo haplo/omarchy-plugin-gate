@@ -80,6 +80,7 @@ Every candidate keeps its evidence under
 
 ```
 reviews/<short-sha>/patch        the exact diff that was reviewed
+reviews/<short-sha>/patch.review the copy handed to the reviewer (patch + code word)
 reviews/<short-sha>/mech.txt     hard structural check results
 reviews/<short-sha>/findings.txt structural findings handed to the reviewer
 reviews/<short-sha>/hints.txt    keywords handed to the reviewer
@@ -100,6 +101,8 @@ held                             the last commit that failed and why
 - diffs larger than `OMARCHY_PLUGIN_GATE_MAX_PATCH` (default 2 MiB, sized for a
   reviewer model with a 1M-token context), which the reviewer could not read in
   full
+- diffs that are not valid UTF-8, which OpenCode would not hand to the reviewer
+  as text; the offending files are named
 - a manifest `id` change, or a manifest that can no longer be read
 - `manifest.json` that does not validate at the candidate commit
 - entry points that escape the plugin directory or name a file missing from the
@@ -133,12 +136,21 @@ not exist is recorded as `REVIEW FAIL`. A pass that cleared findings writes
 say so, so you know which approvals are worth a second look.
 
 **The reviewer** is a read-only OpenCode agent (`plugin-reviewer`) with no shell,
-no write access and no network tools; it may only read the gate's state
-directory. It receives the patch, the structural findings and keyword hints, and
-must answer on the first line with exactly `REVIEW PASS` or `REVIEW FAIL`,
+no write access and no network tools. It runs from the candidate's review
+directory and may only read, glob and grep inside it, so it sees the patch and
+nothing else. It receives the patch, the structural findings and keyword hints,
+and must answer on the first line with exactly `REVIEW PASS` or `REVIEW FAIL`,
 followed by its finding answers and one reason per line. It never runs from the
 plugin checkout, so a hostile `.opencode/` configuration in the diff cannot
 execute. Reviewer crash, timeout, or a missing verdict line all fail closed.
+
+The copy of the patch the reviewer gets (`patch.review`) ends with a line
+carrying a random code word, generated for each run and never put in the prompt.
+The reviewer must finish its answer with `SEEN <word>`. Without the right word
+the verdict is `REVIEW FAIL`: the reviewer did not receive, or did not finish,
+the whole patch, so whatever it said was not about all of the code. If the
+attachment arrives cut off, the reviewer can page through `./patch.review` with
+its read tool.
 
 ## Approving a failed review
 
@@ -188,8 +200,8 @@ the time a hook finishes. The gate is what prevents bad code from arriving.
 | `OMARCHY_PLUGIN_GATE_MAX_PATCH` | `2097152` | largest diff that is auto-reviewed; assumes a 1M-token model, so lower it for smaller ones (about 3 bytes per token, minus headroom) |
 | `OMARCHY_PLUGIN_GATE_STATE` | `~/.local/state/omarchy-plugin-gate` | evidence and markers |
 
-`OMARCHY_PLUGIN_GATE_STATE` is rendered into the reviewer agent at install time;
-re-run `mise run install` after changing it.
+Re-run `mise run install` after pulling a change to the reviewer agent;
+`doctor` reports an installed agent that no longer matches the repository.
 
 ## Already-installed plugins
 
@@ -216,7 +228,9 @@ The suite builds throwaway repositories in a temporary directory, uses a stub
 reviewer and stub `omarchy` commands, and covers the bootstrap review, clean and
 partial updates, every hard structural failure (asserting the model is *not*
 called), every kind of structural finding reaching the reviewer, each way a
-reviewer can fail to clear a finding, reviewer failure and crash, update applying and refusing, the tripwire
+reviewer can fail to clear a finding, a missing, wrong or planted code word,
+reviewer failure and crash, the reviewer's working directory, `doctor`
+spotting a stale reviewer agent, update applying and refusing, the tripwire
 rolling back a rejected pull while leaving local commits alone, notification
 policy, one-time approvals (including dry run, `--sha`, `--show`, and the
 resulting update), and both `add` outcomes. No network, no real plugin install.

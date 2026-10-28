@@ -30,21 +30,42 @@ All notable changes to omarchy-plugin-gate. The format follows
   finding and the reviewer's reason. `check`, `status`, `add`, the log and the
   notification all call them out.
 - More than 40 findings in one candidate is a hard failure.
+- The reviewer must prove it saw the whole patch. The copy it receives,
+  `reviews/<short-sha>/patch.review`, ends with a line carrying a random code
+  word generated for each run and kept out of the prompt; the reviewer must
+  answer `SEEN <word>`. A `REVIEW PASS` without the right word is recorded as
+  `REVIEW FAIL`, and a `REVIEW FAIL` without it says the reviewer never saw
+  the whole patch.
+- A patch that is not valid UTF-8 is a hard structural failure naming the
+  offending files. OpenCode does not hand such a file to the model as text, so
+  the reviewer used to see no code at all and blame the patch size.
+- `doctor` reports an installed reviewer agent that differs from the one in the
+  repository.
 
 ### Changed
 
 - Hard structural failures, which still skip the model, are now limited to an
-  oversized patch, a manifest `id` change or unreadable manifest, a manifest
-  that does not validate, entry points that escape the plugin directory or name
-  a missing file, and too many findings.
+  oversized patch, a patch that is not valid UTF-8, a manifest `id` change or
+  unreadable manifest, a manifest that does not validate, entry points that
+  escape the plugin directory or name a missing file, and too many findings.
 - The default `OMARCHY_PLUGIN_GATE_MAX_PATCH` is now 2 MiB (was 512 KiB),
   sized for a reviewer model with a 1M-token context. Set it lower for smaller
   models.
 - The `plugin-reviewer` agent has a section on judging findings and a new output
-  format. Re-run `mise run install` to render it.
+  format, and is installed verbatim; the state path is no longer rendered into
+  it. Re-run `mise run install`.
+- The reviewer runs from the candidate's review directory instead of the whole
+  state directory, and may read, glob and grep only there. It gets 40 steps
+  (was 8) and is told to page through `./patch.review` if the attachment is
+  missing or cut off.
 
 ### Fixed
 
+- The reviewer's `read`, `glob` and `grep` permissions never matched anything:
+  OpenCode V2 matches `read` against a path relative to the working directory
+  and `glob`/`grep` against the pattern, not an absolute state path. Every tool
+  call was denied, so a reviewer that could not use the attachment had no way
+  to read the patch.
 - The entry-point "missing file" check and `omarchy plugin validate` now
   inspect the candidate commit rather than the clone's checkout. Before, a new
   entry-point file was always reported missing and the manifest was validated at
