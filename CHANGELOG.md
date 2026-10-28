@@ -44,6 +44,8 @@ All notable changes to omarchy-plugin-gate. The format follows
 
 ### Changed
 
+- The default gate root (`OMARCHY_PLUGIN_GATE_ROOT`) is now
+  `~/Work/omarchy-plugins/`.
 - Hard structural failures, which still skip the model, are now limited to an
   oversized patch, a patch that is not valid UTF-8, a manifest `id` change or
   unreadable manifest, a manifest that does not validate, entry points that

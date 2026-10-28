@@ -6,7 +6,7 @@ REPO=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 
 BIN_DIR=${OMARCHY_PLUGIN_GATE_BIN_DIR:-$HOME/.local/bin}
 CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
-ROOT=${OMARCHY_PLUGIN_GATE_ROOT:-$HOME/Code/omarchy-plugins}
+ROOT=${OMARCHY_PLUGIN_GATE_ROOT:-$HOME/Work/omarchy-plugins}
 UNIT_DIR=$CONFIG_HOME/systemd/user
 AGENT_FILE=$CONFIG_HOME/opencode/agents/plugin-reviewer.md
 

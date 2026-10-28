@@ -10,7 +10,7 @@
 #
 # How it fits together:
 #
-#   ~/Code/omarchy-plugins/<name>/   a normal clone; origin is the upstream repo
+#   ~/Work/omarchy-plugins/<name>/   a normal clone; origin is the upstream repo
 #                                    and refs/heads/gate-approved is the only
 #                                    commit the gate has approved
 #   ~/.config/omarchy/plugins/<id>/  the installed copy; its origin points at
@@ -30,7 +30,7 @@ export GIT_TERMINAL_PROMPT=0
 VERSION="0.2.0"
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 
-ROOT="${OMARCHY_PLUGIN_GATE_ROOT:-${PLUGIN_GATE_ROOT:-$HOME/Code/omarchy-plugins}}"
+ROOT="${OMARCHY_PLUGIN_GATE_ROOT:-${PLUGIN_GATE_ROOT:-$HOME/Work/omarchy-plugins}}"
 STATE_ROOT="${OMARCHY_PLUGIN_GATE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-plugin-gate}"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 INSTALLED_ROOT="$CONFIG_HOME/omarchy/plugins"
@@ -107,7 +107,7 @@ omarchy-plugin-gate — review Omarchy plugin updates before they reach the shel
       missing hooks.
 
 Environment:
-  OMARCHY_PLUGIN_GATE_ROOT     gate root      (default ~/Code/omarchy-plugins)
+  OMARCHY_PLUGIN_GATE_ROOT     gate root      (default ~/Work/omarchy-plugins)
   OMARCHY_PLUGIN_GATE_MODEL    reviewer model (default: OpenCode's default)
   OMARCHY_PLUGIN_GATE_NOTIFY   all|ready|none (default all)
   OMARCHY_PLUGIN_GATE_TIMEOUT  reviewer timeout in seconds (default 420)

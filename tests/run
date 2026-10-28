@@ -240,6 +240,10 @@ case_uncleared() { # case_uncleared <label> <expression> <expected reason substr
 }
 
 # --- tests -------------------------------------------------------------------
+printf '\n== default root ==\n'
+out=$(env -u OMARCHY_PLUGIN_GATE_ROOT -u PLUGIN_GATE_ROOT HOME="$B/home" "$GATE" check 2>&1)
+eq 'root defaults to ~/Work/omarchy-plugins' "$out" "No plugins under $B/home/Work/omarchy-plugins."
+
 printf '\n== bootstrap ==\n'
 "$GATE" check >/dev/null 2>&1
 eq 'check exits 0' "$?" 0

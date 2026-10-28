@@ -18,8 +18,8 @@ that passed.
 ## Install
 
 ```sh
-git clone https://github.com/haplo/omarchy-plugin-gate ~/Code/omarchy-plugin-gate
-cd ~/Code/omarchy-plugin-gate
+git clone https://github.com/haplo/omarchy-plugin-gate ~/Work/omarchy-plugin-gate
+cd ~/Work/omarchy-plugin-gate
 mise trust          # once: allow mise to run this project's tasks
 mise run install
 ```
@@ -61,7 +61,7 @@ to install, or a review was held back. A successful `update` closes it.
 ## How it works
 
 ```
-~/Code/omarchy-plugins/<name>/     normal clone, origin = upstream
+~/Work/omarchy-plugins/<name>/     normal clone, origin = upstream
   main                             your checkout, safe to branch and push from
   refs/heads/gate-approved         exactly what passed review or was waived
 
@@ -193,7 +193,7 @@ the time a hook finishes. The gate is what prevents bad code from arriving.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OMARCHY_PLUGIN_GATE_ROOT` | `~/Code/omarchy-plugins` | where working clones live |
+| `OMARCHY_PLUGIN_GATE_ROOT` | `~/Work/omarchy-plugins` | where working clones live |
 | `OMARCHY_PLUGIN_GATE_MODEL` | OpenCode's default | model for the reviewer, e.g. `venice/claude-opus-4-7` |
 | `OMARCHY_PLUGIN_GATE_NOTIFY` | `all` | `all`, `ready`, or `none` |
 | `OMARCHY_PLUGIN_GATE_TIMEOUT` | `420` | reviewer timeout, seconds |
@@ -209,8 +209,8 @@ Re-run `mise run install` after pulling a change to the reviewer agent;
 installed from GitHub:
 
 ```sh
-git clone <upstream-url> ~/Code/omarchy-plugins/<name>
-git -C ~/.config/omarchy/plugins/<id> remote set-url origin ~/Code/omarchy-plugins/<name>
+git clone <upstream-url> ~/Work/omarchy-plugins/<name>
+git -C ~/.config/omarchy/plugins/<id> remote set-url origin ~/Work/omarchy-plugins/<name>
 omarchy-plugin-gate check        # reviews the current tree, sets gate-approved
 omarchy-plugin-gate doctor --fix # tripwires
 ```
