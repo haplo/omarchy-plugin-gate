@@ -80,10 +80,12 @@ Every candidate keeps its evidence under
 
 ```
 reviews/<short-sha>/patch        the exact diff that was reviewed
-reviews/<short-sha>/mech.txt     structural pre-check results
+reviews/<short-sha>/mech.txt     hard structural check results
+reviews/<short-sha>/findings.txt structural findings handed to the reviewer
 reviews/<short-sha>/hints.txt    keywords handed to the reviewer
 reviews/<short-sha>/review.txt   the reviewer's full output
 reviews/<short-sha>/verdict      REVIEW PASS/FAIL plus reasons
+reviews/<short-sha>/cleared      findings the reviewer cleared, and why
 reviewed/<sha>                   approvals that came from a REVIEW PASS
 waived/<sha>                     one-time human approvals (verdict kept)
 held                             the last commit that failed and why
@@ -91,29 +93,52 @@ held                             the last commit that failed and why
 
 ## Two layers of review
 
-**Structural checks** run first, with no model involved. Any of these is an
-immediate `REVIEW FAIL`:
+**Structural checks** run first, with no model involved, in two tiers.
+
+*Hard failures* are an immediate `REVIEW FAIL`; the reviewer is never called:
+
+- diffs larger than `OMARCHY_PLUGIN_GATE_MAX_PATCH` (default 2 MiB, sized for a
+  reviewer model with a 1M-token context), which the reviewer could not read in
+  full
+- a manifest `id` change, or a manifest that can no longer be read
+- `manifest.json` that does not validate at the candidate commit
+- entry points that escape the plugin directory or name a file missing from the
+  candidate commit
+- more than 40 structural findings in one candidate
+
+*Findings* are pattern matches that usually, but not always, mean trouble. They
+are numbered `F1`, `F2`, … and handed to the reviewer with the patch:
 
 - binary files outside common asset types
 - `.git/`, `.ssh/`, `authorized_keys`, `sudoers`, `systemd/`, `omarchy/hooks`,
-  `.config/`, `*.service`, `*.timer`, `*.desktop`, `*.pem`, `*.key`
-- newly executable files without a shebang
-- manifest `id`, `kinds` or `entryPoints` changes
-- entry points that escape the plugin directory or point at missing files
-- `manifest.json` that does not validate
+  `*.service`, `*.timer`, `*.socket`, `*.path`, `*.desktop`, `*.pem`, `*.key`,
+  `*.p12`
+- newly executable files without a shebang, or in one of the paths above
+- manifest `kinds` or `entryPoints` changes
 - added code lines that pipe a download or decoder into a shell, use `/dev/tcp`,
   or pipe into `sudo`/`pkexec`
-- diffs larger than `OMARCHY_PLUGIN_GATE_MAX_PATCH` (default 512 KiB)
 
-Anything larger goes to a human instead of an automatic pass.
+The reviewer must answer every finding, on its own line after the verdict:
+
+```
+REVIEW PASS
+F1 CLEARED systemd/ holds QML that displays unit status; nothing is installed
+F2 CLEARED icon.bin is loaded by Icon.qml as image data
+```
+
+A `REVIEW PASS` with a finding left unanswered, answered twice, answered
+`CONFIRMED`, cleared without a reason, or with an answer to a finding that does
+not exist is recorded as `REVIEW FAIL`. A pass that cleared findings writes
+`reviews/<short-sha>/cleared`, and `check`, `status` and the notification all
+say so, so you know which approvals are worth a second look.
 
 **The reviewer** is a read-only OpenCode agent (`plugin-reviewer`) with no shell,
 no write access and no network tools; it may only read the gate's state
-directory. It receives the patch plus keyword hints and must answer on the first
-line with exactly `REVIEW PASS` or `REVIEW FAIL`, followed by one reason per
-line. It never runs from the plugin checkout, so a hostile `.opencode/`
-configuration in the diff cannot execute. Reviewer crash, timeout, or a missing
-verdict line all fail closed.
+directory. It receives the patch, the structural findings and keyword hints, and
+must answer on the first line with exactly `REVIEW PASS` or `REVIEW FAIL`,
+followed by its finding answers and one reason per line. It never runs from the
+plugin checkout, so a hostile `.opencode/` configuration in the diff cannot
+execute. Reviewer crash, timeout, or a missing verdict line all fail closed.
 
 ## Approving a failed review
 
@@ -138,9 +163,9 @@ shows both `REVIEW FAIL` and `approval waived by hand`. `approve` moves
 `gate-approved` and installs the hooks; `update` still does the installation.
 
 Approval covers the held candidate only. It does not fetch, and `--sha` must
-name a commit that is still reachable from `origin/<branch>`. Structural holds
-can be waived too: the findings are printed first, so read them before you
-answer.
+name a commit that is still reachable from `origin/<branch>`. Hard structural
+failures can be waived too: the failures and findings are printed first, so read
+them before you answer.
 
 ## Tripwire
 
@@ -160,7 +185,7 @@ the time a hook finishes. The gate is what prevents bad code from arriving.
 | `OMARCHY_PLUGIN_GATE_MODEL` | OpenCode's default | model for the reviewer, e.g. `venice/claude-opus-4-7` |
 | `OMARCHY_PLUGIN_GATE_NOTIFY` | `all` | `all`, `ready`, or `none` |
 | `OMARCHY_PLUGIN_GATE_TIMEOUT` | `420` | reviewer timeout, seconds |
-| `OMARCHY_PLUGIN_GATE_MAX_PATCH` | `524288` | largest diff that is auto-reviewed |
+| `OMARCHY_PLUGIN_GATE_MAX_PATCH` | `2097152` | largest diff that is auto-reviewed; assumes a 1M-token model, so lower it for smaller ones (about 3 bytes per token, minus headroom) |
 | `OMARCHY_PLUGIN_GATE_STATE` | `~/.local/state/omarchy-plugin-gate` | evidence and markers |
 
 `OMARCHY_PLUGIN_GATE_STATE` is rendered into the reviewer agent at install time;
@@ -189,8 +214,9 @@ mise run test     # or: tests/run
 
 The suite builds throwaway repositories in a temporary directory, uses a stub
 reviewer and stub `omarchy` commands, and covers the bootstrap review, clean and
-partial updates, every structural rejection (asserting the model is *not*
-called), reviewer failure and crash, update applying and refusing, the tripwire
+partial updates, every hard structural failure (asserting the model is *not*
+called), every kind of structural finding reaching the reviewer, each way a
+reviewer can fail to clear a finding, reviewer failure and crash, update applying and refusing, the tripwire
 rolling back a rejected pull while leaving local commits alone, notification
 policy, one-time approvals (including dry run, `--sha`, `--show`, and the
 resulting update), and both `add` outcomes. No network, no real plugin install.
@@ -207,8 +233,10 @@ the installed copies back at their upstream repositories.
 
 ## Limits, honestly
 
-- The reviewer is advisory. The structural checks and the retained patch and
-  transcript for every approved commit are the durable record. Read a diff
+- The reviewer is advisory. The hard structural checks and the retained patch
+  and transcript for every approved commit are the durable record. Findings the
+  reviewer cleared are a judgement call a hostile diff may try to argue it
+  into; `cleared` lists them, so check those approvals first. Read a diff
   yourself when the gate says `REVIEW FAIL` — use `approve --show` or the patch
   path in `status`.
 - `origin/main` in a working clone is whatever upstream last published; the gate

@@ -17,9 +17,11 @@
 #                                    the clone above, so `omarchy plugin update`
 #                                    can only ever fetch an approved commit
 #
-# Every candidate commit is diffed, checked structurally, and shown to the
-# plugin-reviewer agent. A commit is promoted only on REVIEW PASS; failures are
-# kept in ~/.local/state/omarchy-plugin-gate/<name>/ for inspection.
+# Every candidate commit is diffed and checked structurally. Hard failures stop
+# there; softer findings go to the plugin-reviewer agent with the diff, and the
+# reviewer must clear each one explicitly. A commit is promoted only on REVIEW
+# PASS; failures are kept in ~/.local/state/omarchy-plugin-gate/<name>/ for
+# inspection.
 
 set -euo pipefail
 
@@ -36,20 +38,28 @@ AGENT="${OMARCHY_PLUGIN_GATE_AGENT:-plugin-reviewer}"
 MODEL="${OMARCHY_PLUGIN_GATE_MODEL:-}"
 NOTIFY_POLICY="${OMARCHY_PLUGIN_GATE_NOTIFY:-${PLUGIN_GATE_NOTIFY:-all}}"
 REVIEW_TIMEOUT="${OMARCHY_PLUGIN_GATE_TIMEOUT:-420}"
-MAX_PATCH_BYTES="${OMARCHY_PLUGIN_GATE_MAX_PATCH:-524288}"
+# 2 MiB of diff is roughly 600k-840k tokens, which leaves a 1M-token reviewer
+# room for its prompt, findings and answer. Lower it for smaller models.
+MAX_PATCH_BYTES="${OMARCHY_PLUGIN_GATE_MAX_PATCH:-2097152}"
 APPROVED_REF="refs/heads/gate-approved"
 
 # Paths a plugin has no business touching. Checked on every added or modified
-# file, and on every file that gains the executable bit.
+# file, and on every file that gains the executable bit. A match is a finding
+# the reviewer must clear, not a hard fail.
 DENY_PATH='(^|/)\.git/|(^|/)\.ssh/|(^|/)authorized_keys$|(^|/)sudoers$|\.service$|\.timer$|\.socket$|\.path$|\.desktop$|\.pem$|\.key$|\.p12$|(^|/)systemd/|(^|/)omarchy/hooks'
 
-# Added lines that are a hard fail on their own: download-and-execute, encoded
-# payloads piped into a shell, reverse shells, privilege escalation via a pipe.
-HARD_LINE='(curl|wget)[^|]*\|[[:space:]]*(ba|z|da|k)?sh([[:space:]]|$)|base64[[:space:]]+(-d|--decode)[^|]*\||(nc|ncat)[[:space:]].*-[a-z]*e[[:space:]]|/dev/tcp/|\|[[:space:]]*(sudo|pkexec)[[:space:]]'
+# Added lines that look like download-and-execute, encoded payloads piped into a
+# shell, reverse shells, or privilege escalation via a pipe. Each match is a
+# finding the reviewer must clear.
+DANGER_LINE='(curl|wget)[^|]*\|[[:space:]]*(ba|z|da|k)?sh([[:space:]]|$)|base64[[:space:]]+(-d|--decode)[^|]*\||(nc|ncat)[[:space:]].*-[a-z]*e[[:space:]]|/dev/tcp/|\|[[:space:]]*(sudo|pkexec)[[:space:]]'
 
 # Exactly what the reviewer is good at; collected as hints, never auto-failed,
 # because plenty of legitimate plugin code uses these.
 HINT_RE='curl|wget|eval|new Function|Function\(|subprocess|os\.system|os\.popen|child_process|XMLHttpRequest|fetch\(|WebSocket|socket|base64|pkexec|sudo|systemctl|chmod|rm -rf|/etc/|api[_ -]?key|token|secret|password|\.env\b|ssh|gpg|keyring'
+
+# More findings than this in one candidate is a hard fail: the reviewer cannot
+# give each one real attention, and a human should look instead.
+MAX_FINDINGS=40
 
 # --------------------------------------------------------------------- output
 
@@ -73,6 +83,8 @@ omarchy-plugin-gate — review Omarchy plugin updates before they reach the shel
 
   check [-p NAME]
       Fetch upstream, review new commits, stage approved ones. Never installs.
+      Hard structural failures are held without a model call; other structural
+      findings go to the reviewer, which must clear each one.
 
   approve <name> [--sha SHA] [--reason TEXT] [--show] [-n|--dry-run]
       One-time human approval for a candidate the gate held back. Shows the
@@ -94,7 +106,7 @@ Environment:
   OMARCHY_PLUGIN_GATE_MODEL    reviewer model (default: OpenCode's default)
   OMARCHY_PLUGIN_GATE_NOTIFY   all|ready|none (default all)
   OMARCHY_PLUGIN_GATE_TIMEOUT  reviewer timeout in seconds (default 420)
-  OMARCHY_PLUGIN_GATE_MAX_PATCH  patch size limit in bytes (default 524288)
+  OMARCHY_PLUGIN_GATE_MAX_PATCH  patch size limit in bytes (default 2097152)
 EOF
 }
 
@@ -256,9 +268,12 @@ verdict_reasons() {
 
 # ------------------------------------------------------------------ mechanics
 #
-# Structural checks that no amount of clever prompt writing can talk their way
-# past. Anything here is a hard REVIEW FAIL; keyword hits go to the reviewer as
-# hints instead.
+# Structural checks in two tiers. Hard failures are things the model cannot
+# judge (a patch too large to read) or that break the gate's own bookkeeping
+# (manifest identity, loadability); they are a REVIEW FAIL with no model call.
+# Findings are pattern matches that are usually, but not always, a problem; they
+# go to the reviewer numbered F1..Fn and each must be explicitly cleared.
+# Keyword hits go to the reviewer as plain hints.
 
 normalize_path() {
   local p=$1
@@ -273,20 +288,25 @@ normalize_path() {
   printf '%s' "$p"
 }
 
+# check_mechanics <clone> <old> <new> <patch> <mech-out> <findings-out>
+# Returns non-zero on a hard failure. Findings are written either way.
 check_mechanics() {
-  local clone=$1 old=$2 new=$3 out=$4
+  local clone=$1 old=$2 new=$3 patch=$4 out=$5 findings=$6
   local fail=0
-  local empty numstat summary
+  local base numstat summary size
+  local -a found=()
   : >"$out"
-  empty=$(empty_tree "$clone")
+  : >"$findings"
+  base=${old:-$(empty_tree "$clone")}
 
-  if [[ -z $old ]]; then
-    numstat=$(git -C "$clone" diff --numstat "$empty" "$new")
-    summary=$(git -C "$clone" diff --summary "$empty" "$new")
-  else
-    numstat=$(git -C "$clone" diff --numstat "$old" "$new")
-    summary=$(git -C "$clone" diff --summary "$old" "$new")
+  size=$(wc -c <"$patch")
+  if ((size > MAX_PATCH_BYTES)); then
+    printf 'patch is %s bytes, over the %s byte review limit — needs a human\n' "$size" "$MAX_PATCH_BYTES" >>"$out"
+    fail=1
   fi
+
+  numstat=$(git -C "$clone" diff --numstat "$base" "$new")
+  summary=$(git -C "$clone" diff --summary "$base" "$new")
 
   local added deleted path line first
   while IFS=$'\t' read -r added deleted path; do
@@ -295,15 +315,11 @@ check_mechanics() {
     if [[ $added == "-" ]]; then
       case ${path,,} in
       *.png | *.jpg | *.jpeg | *.gif | *.webp | *.ico | *.avif | *.bmp | *.woff | *.woff2 | *.ttf) ;;
-      *)
-        printf 'binary file added or changed outside a known asset type: %s\n' "$path" >>"$out"
-        fail=1
-        ;;
+      *) found+=("binary file added or changed outside a known asset type: $path") ;;
       esac
     fi
     if [[ $path =~ $DENY_PATH ]]; then
-      printf 'plugin touches a path it has no business touching: %s\n' "$path" >>"$out"
-      fail=1
+      found+=("plugin touches a path it has no business touching: $path")
     fi
   done <<<"$numstat"
 
@@ -316,66 +332,131 @@ check_mechanics() {
     esac
     path=$(normalize_path "$path")
     if [[ $path =~ $DENY_PATH ]]; then
-      printf 'executable in a protected location: %s\n' "$path" >>"$out"
-      fail=1
+      found+=("executable in a protected location: $path")
     fi
     first=$(git -C "$clone" show "$new:$path" 2>/dev/null | head -c2 || true)
     if [[ $first != "#!" ]]; then
-      printf 'file made executable without a shebang: %s\n' "$path" >>"$out"
-      fail=1
+      found+=("file made executable without a shebang: $path")
     fi
   done <<<"$summary"
 
-  # The manifest decides what the shell loads. Its identity may not drift.
+  # The manifest id is how the gate finds the installed copy; it may not drift.
+  # What the shell loads (kinds, entryPoints) is for the reviewer to judge.
   if [[ -n $old ]] && ! git -C "$clone" diff --quiet "$old" "$new" -- manifest.json 2>/dev/null; then
     local a b
-    a=$(git -C "$clone" show "$old:manifest.json" 2>/dev/null | jq -cS '{id,kinds,entryPoints}' 2>/dev/null || echo none)
-    b=$(git -C "$clone" show "$new:manifest.json" 2>/dev/null | jq -cS '{id,kinds,entryPoints}' 2>/dev/null || echo none)
+    a=$(git -C "$clone" show "$old:manifest.json" 2>/dev/null | jq -c '.id' 2>/dev/null || echo none)
+    b=$(git -C "$clone" show "$new:manifest.json" 2>/dev/null | jq -c '.id' 2>/dev/null || echo none)
     if [[ $a != "$b" ]]; then
-      printf 'manifest id/kinds/entryPoints changed — needs a human\n' >>"$out"
+      printf 'manifest id changed or unreadable (%s -> %s) — needs a human\n' "$a" "$b" >>"$out"
       fail=1
+    fi
+    a=$(git -C "$clone" show "$old:manifest.json" 2>/dev/null | jq -cS '{kinds,entryPoints}' 2>/dev/null || echo none)
+    b=$(git -C "$clone" show "$new:manifest.json" 2>/dev/null | jq -cS '{kinds,entryPoints}' 2>/dev/null || echo none)
+    if [[ $a != "$b" ]]; then
+      found+=("manifest kinds/entryPoints changed: $a -> $b")
     fi
   fi
 
   local ep
   while IFS= read -r ep; do
     [[ -n $ep ]] || continue
-    if [[ $ep == /* || $ep == *..* ]]; then
+    if [[ $ep == /* || $ep =~ (^|/)\.\.(/|$) ]]; then
       printf 'entryPoints escape the plugin directory: %s\n' "$ep" >>"$out"
       fail=1
-    elif [[ ! -f "$clone/$ep" ]]; then
+    elif ! git -C "$clone" cat-file -e "$new:$ep" 2>/dev/null; then
       printf 'entryPoints names a missing file: %s\n' "$ep" >>"$out"
       fail=1
     fi
   done < <(git -C "$clone" show "$new:manifest.json" 2>/dev/null | jq -r '.entryPoints // {} | to_entries[] | .value' 2>/dev/null || true)
 
+  # Validate the candidate tree itself, not whatever the clone has checked out.
   if command -v omarchy >/dev/null 2>&1; then
-    if ! omarchy plugin validate "$clone" >/dev/null 2>&1; then
+    local tree
+    tree=$(mktemp -d "${TMPDIR:-/tmp}/omarchy-plugin-gate.XXXXXX")
+    if ! { git -C "$clone" archive "$new" | tar -x -C "$tree"; } 2>/dev/null ||
+      ! omarchy plugin validate "$tree" >/dev/null 2>&1; then
       printf 'manifest does not validate at this revision\n' >>"$out"
       fail=1
     fi
+    rm -rf "$tree"
   fi
 
   # Download-and-execute in an added line. Documentation is excluded so a README
-  # quoting an install curl cannot block an update.
-  local content
-  if [[ -z $old ]]; then
-    content=$(git -C "$clone" diff "$empty" "$new" -- . ':(exclude)*.md' ':(exclude)*.txt' ':(exclude)LICENSE' 2>/dev/null || true)
-  else
-    content=$(git -C "$clone" diff "$old" "$new" -- . ':(exclude)*.md' ':(exclude)*.txt' ':(exclude)LICENSE' 2>/dev/null || true)
-  fi
+  # quoting an install curl cannot raise a finding.
   local hit
-  hit=$(printf '%s\n' "$content" | grep -a -E '^\+' | grep -a -Ei "$HARD_LINE" | head -1 || true)
-  if [[ -n $hit ]]; then
-    printf 'added line pipes a download or decoder into a shell: %s\n' "${hit#+}" >>"$out"
+  while IFS= read -r hit; do
+    found+=("added line pipes a download or decoder into a shell: ${hit:0:200}")
+  done < <(git -C "$clone" diff "$base" "$new" -- . ':(exclude)*.md' ':(exclude)*.txt' ':(exclude)LICENSE' 2>/dev/null |
+    grep -a -E '^\+' | grep -a -Ei "$DANGER_LINE" | sed 's/^+//' || true)
+
+  if ((${#found[@]} > MAX_FINDINGS)); then
+    printf '%s structural findings, over the %s the reviewer is asked to clear — needs a human\n' "${#found[@]}" "$MAX_FINDINGS" >>"$out"
     fail=1
   fi
 
-  # fail == 1 means a finding, so the function's exit status is `fail` itself.
+  local i
+  for i in "${!found[@]}"; do
+    printf 'F%d %s\n' "$((i + 1))" "${found[$i]}" >>"$findings"
+  done
+
+  # fail == 1 means a hard failure, so the function's exit status is `fail`.
   if ((fail == 0)); then
     printf 'PASS structural pre-checks\n' >>"$out"
   fi
   return "$fail"
+}
+
+# finding_problems <review-dir> <count>
+# Every finding needs exactly one "Fn CLEARED <reason>" line after the verdict.
+# Prints one problem per line, or nothing and writes <review-dir>/cleared when
+# the reviewer cleared them all. Anything unrecognised is a problem.
+finding_problems() {
+  local rd=$1 n=$2 line id word reason i
+  local -A count=() word_of=() reason_of=()
+  local -a problems=()
+  local re='^[[:space:]]*([-*][[:space:]]+)?F([0-9]+):?[[:space:]]+(CLEARED|CONFIRMED):?[[:space:]]*(.*)$'
+
+  while IFS= read -r line; do
+    [[ $line =~ $re ]] || continue
+    id=${BASH_REMATCH[2]} word=${BASH_REMATCH[3]} reason=${BASH_REMATCH[4]}
+    if ! [[ $id =~ ^[1-9][0-9]{0,3}$ ]] || ((id > n)); then
+      problems+=("reviewer answered an unknown finding F$id")
+      continue
+    fi
+    count[$id]=$((${count[$id]:-0} + 1))
+    word_of[$id]=$word
+    reason_of[$id]=${reason%"${reason##*[![:space:]]}"}
+  done < <(tail -n +2 "$rd/verdict")
+
+  for ((i = 1; i <= n; i++)); do
+    if [[ -z ${count[$i]:-} ]]; then
+      problems+=("F$i not addressed by the reviewer")
+    elif ((count[$i] > 1)); then
+      problems+=("F$i answered more than once")
+    elif [[ ${word_of[$i]} == CONFIRMED ]]; then
+      problems+=("F$i confirmed by the reviewer: ${reason_of[$i]}")
+    elif [[ -z ${reason_of[$i]} ]]; then
+      problems+=("F$i cleared without a reason")
+    fi
+  done
+
+  if ((${#problems[@]} > 0)); then
+    printf '%s\n' "${problems[@]}"
+    return 0
+  fi
+
+  for ((i = 1; i <= n; i++)); do
+    grep -m1 "^F$i " "$rd/findings.txt"
+    printf '   cleared: %s\n' "${reason_of[$i]}"
+  done >"$rd/cleared"
+}
+
+cleared_count() { # cleared_count <review-dir>
+  if [[ -f $1/cleared ]]; then
+    grep -c '^F[0-9]' "$1/cleared" || true
+  else
+    printf '0\n'
+  fi
 }
 
 scan_hints() {
@@ -394,8 +475,11 @@ scan_hints() {
 
 run_reviewer() {
   local name=$1 clone=$2 old=$3 new=$4 rd=$5
-  local patch="$rd/patch" hints="$rd/hints.txt"
-  local id subject range
+  local patch="$rd/patch" hints="$rd/hints.txt" findings="$rd/findings.txt"
+  local id subject range nfind=0
+  if [[ -s $findings ]]; then
+    nfind=$(grep -c '^F[0-9]' "$findings" || true)
+  fi
   id=$(manifest_id "$name")
   subject=$(git -C "$clone" log -1 --format='%s' "$new" 2>/dev/null || true)
   if [[ -z $old ]]; then
@@ -427,8 +511,18 @@ $commitlog
 Files changed:
 $statsum
 
-Mechanical pre-checks: PASS (no binaries, install hooks, protected paths,
-download-and-execute lines, or manifest identity changes).
+Hard structural checks: PASS (patch within the size limit, manifest id
+unchanged, manifest valid, entry points inside the plugin and present).
+$(if ((nfind > 0)); then
+    echo "Structural findings ($nfind). Pattern matches, not verdicts; judge each one:"
+    sed 's/^/  /' "$findings"
+    echo "After the verdict line, answer every finding on its own line:"
+    echo "  Fn CLEARED <why the diff shows it is harmless>"
+    echo "  Fn CONFIRMED <what an attacker gains>"
+    echo "A finding left unanswered, answered twice, or CONFIRMED fails the review."
+  else
+    echo "Structural findings: none."
+  fi)
 $(if [[ -s $hints ]]; then
     echo "Keyword hints found in added lines (context, not a verdict):"
     sed 's/^/  /' "$hints"
@@ -471,6 +565,20 @@ EOF
   fi
 
   if [[ $vline == "REVIEW PASS"* ]]; then
+    if ((nfind > 0)); then
+      local problems
+      problems=$(finding_problems "$rd" "$nfind")
+      if [[ -n $problems ]]; then
+        {
+          printf 'REVIEW FAIL\n%s\n' "$problems"
+          printf 'The reviewer answered REVIEW PASS without clearing every structural finding (see review.txt).\n'
+        } >"$rd/verdict"
+        log_event "$name" "held $new (structural findings not cleared)"
+        return 1
+      fi
+      log_event "$name" "approved $new with $nfind structural finding(s) cleared by the reviewer"
+      return 0
+    fi
     log_event "$name" "approved $new"
     return 0
   fi
@@ -489,7 +597,10 @@ review() {
   rd=$(review_dir_of "$name" "$new")
   mkdir -p "$rd"
 
-  local empty patch size
+  # A re-review of the same commit must not inherit a previous run's evidence.
+  rm -f "$rd/cleared" "$rd/hints.txt" "$rd/review.txt"
+
+  local empty patch
   empty=$(empty_tree "$clone")
   patch="$rd/patch"
   if [[ -z $old ]]; then
@@ -497,16 +608,9 @@ review() {
   else
     git -C "$clone" diff "$old" "$new" >"$patch"
   fi
-  size=$(wc -c <"$patch")
 
-  local mech="$rd/mech.txt" mech_ok=1
-  check_mechanics "$clone" "$old" "$new" "$mech" || mech_ok=0
-  if ((size > MAX_PATCH_BYTES)); then
-    printf 'patch is %s bytes, over the %s byte review limit — needs a human\n' "$size" "$MAX_PATCH_BYTES" >>"$mech"
-    mech_ok=0
-  fi
-
-  if ((mech_ok == 0)); then
+  local mech="$rd/mech.txt"
+  if ! check_mechanics "$clone" "$old" "$new" "$patch" "$mech" "$rd/findings.txt"; then
     {
       printf 'REVIEW FAIL\n'
       grep -v '^[[:space:]]*$' "$mech"
@@ -660,7 +764,7 @@ cmd_post_merge() {
 
 # ---------------------------------------------------------------------- check
 
-declare -a READY_LIST=() HELD_LIST=() ERROR_LIST=()
+declare -a READY_LIST=() HELD_LIST=() ERROR_LIST=() CLEARED_LIST=()
 
 record_ready() { READY_LIST+=("$1"); }
 record_held() {
@@ -739,6 +843,9 @@ check_one() {
   say "$name: reviewing ${base:+${base:0:12}..}${head:0:12}"
   if review "$name" "$clone" "$base" "$head"; then
     set_marker "$name" "$head" "${base:+update}${base:-initial import}"
+    if [[ -f $(review_dir_of "$name" "$head")/cleared ]]; then
+      CLEARED_LIST+=("$name")
+    fi
     git -C "$clone" update-ref "$APPROVED_REF" "$head"
     advance_main "$clone" "$head"
     ensure_hooks "$name"
@@ -762,19 +869,24 @@ cmd_check() {
     return 0
   fi
 
-  local ready=${#READY_LIST[@]} held=${#HELD_LIST[@]} errors=${#ERROR_LIST[@]}
+  local ready=${#READY_LIST[@]} held=${#HELD_LIST[@]} errors=${#ERROR_LIST[@]} cleared=${#CLEARED_LIST[@]}
   say ""
   say "ready to install: $ready   held back: $held   errors: $errors"
   ((ready > 0)) && info "${READY_LIST[*]}"
   ((held > 0)) && info "held: ${HELD_LIST[*]}"
   ((errors > 0)) && info "errors: ${ERROR_LIST[*]}"
+  ((cleared > 0)) && info "structural findings cleared by the reviewer: ${CLEARED_LIST[*]} (see status)"
 
   if ((ready + held + errors > 0)); then
     local headline body
     if ((ready + held == 1 && errors == 0)); then
       if ((ready == 1)); then
         headline="${READY_LIST[0]}: update ready"
-        body="Reviewed and approved. Run omarchy-plugin-gate update."
+        if [[ " ${CLEARED_LIST[*]} " == *" ${READY_LIST[0]} "* ]]; then
+          body="Approved after the reviewer cleared structural findings. Check status, then run omarchy-plugin-gate update."
+        else
+          body="Reviewed and approved. Run omarchy-plugin-gate update."
+        fi
       else
         headline="${HELD_LIST[0]}: update held back"
         body="The review failed. Open status to see why."
@@ -782,6 +894,7 @@ cmd_check() {
     else
       headline="$((ready + held)) plugin updates reviewed"
       body="$ready ready to install · $held held back"
+      ((cleared > 0)) && body="$body · $cleared with cleared findings"
       ((errors > 0)) && body="$body · $errors error(s)"
     fi
     case $NOTIFY_POLICY in
@@ -882,9 +995,13 @@ cmd_approve() {
     if grep -qx 'PASS structural pre-checks' "$rd/mech.txt"; then
       info "checks    PASS structural pre-checks"
     else
-      info "checks    structural findings:"
+      info "checks    hard structural failures:"
       sed 's/^/              /' "$rd/mech.txt"
     fi
+  fi
+  if [[ -s $rd/findings.txt ]]; then
+    info "findings  structural findings for the reviewer:"
+    sed 's/^/              /' "$rd/findings.txt"
   fi
   if [[ -f $rd/patch ]]; then
     info "patch     $rd/patch"
@@ -1099,6 +1216,12 @@ cmd_add() {
   set_marker "$name" "$head" "initial import"
   git -C "$clone" update-ref "$APPROVED_REF" "$head"
   install_hook "$clone" "$name" || warn "could not install the tripwire in $clone"
+  local rd ncleared
+  rd=$(review_dir_of "$name" "$head")
+  ncleared=$(cleared_count "$rd")
+  if ((ncleared > 0)); then
+    info "the reviewer cleared $ncleared structural finding(s): $rd/cleared"
+  fi
 
   say "Installing $id"
   if ! out=$(omarchy plugin add "$clone" --yes 2>&1); then
@@ -1134,10 +1257,12 @@ cmd_add() {
   idir="$INSTALLED_ROOT/$id"
   [[ -d $idir ]] && install_hook "$idir" "$name" || true
 
+  local suffix=""
+  ((ncleared > 0)) && suffix=" The reviewer cleared $ncleared structural finding(s); check status."
   if ((enable)); then
-    notify "$id: installed" "Reviewed, installed and enabled."
+    notify "$id: installed" "Reviewed, installed and enabled.$suffix"
   else
-    notify "$id: installed" "Reviewed and installed, left disabled."
+    notify "$id: installed" "Reviewed and installed, left disabled.$suffix"
   fi
   say ""
   say "Done. $id at ${head:0:12} (installed from the reviewed clone)"
@@ -1192,6 +1317,12 @@ cmd_status() {
     info "state     $state"
     if [[ -n $waiver_file ]]; then
       info "approval  waived by hand${waiver_reason:+ — $waiver_reason}"
+    fi
+    if [[ -n $approved ]]; then
+      rd=$(review_dir_of "$name" "$approved")
+      if [[ -f $rd/cleared ]]; then
+        info "findings  $(cleared_count "$rd") cleared by the reviewer — $rd/cleared"
+      fi
     fi
     if [[ $state == "held back" ]]; then
       info "next      omarchy-plugin-gate approve -p $name   (or check -p $name to retry)"
