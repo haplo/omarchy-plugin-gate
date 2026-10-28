@@ -45,6 +45,9 @@ omarchy-plugin-gate add https://github.com/ninepointlabs/omasync
 # review upstream changes (the daily timer runs this)
 omarchy-plugin-gate check
 
+# after reading a failed review yourself, accept that one commit
+omarchy-plugin-gate approve <name>
+
 # apply approved commits to the installed copies
 omarchy-plugin-gate update
 
@@ -60,7 +63,7 @@ to install, or a review was held back. A successful `update` closes it.
 ```
 ~/Code/omarchy-plugins/<name>/     normal clone, origin = upstream
   main                             your checkout, safe to branch and push from
-  refs/heads/gate-approved         exactly what passed review
+  refs/heads/gate-approved         exactly what passed review or was waived
 
 ~/.config/omarchy/plugins/<id>/    installed copy, origin = the clone above
 ```
@@ -68,9 +71,9 @@ to install, or a review was held back. A successful `update` closes it.
 Because the installed copy fetches from the clone, plain `omarchy plugin update`
 can only ever pull `main` from that clone — which is either approved or your own
 work. `check` fetches upstream, diffs `gate-approved..origin/<branch>`, reviews
-it, and advances `gate-approved` only on `REVIEW PASS`. `update` then
-fast-forwards the installed copy to that ref, validates the manifest, and asks
-the shell to rescan.
+it, and advances `gate-approved` only on `REVIEW PASS` or a recorded one-time
+waiver. `update` then fast-forwards the installed copy to that ref, validates
+the manifest, and asks the shell to rescan.
 
 Every candidate keeps its evidence under
 `~/.local/state/omarchy-plugin-gate/<name>/`:
@@ -81,7 +84,8 @@ reviews/<short-sha>/mech.txt     structural pre-check results
 reviews/<short-sha>/hints.txt    keywords handed to the reviewer
 reviews/<short-sha>/review.txt   the reviewer's full output
 reviews/<short-sha>/verdict      REVIEW PASS/FAIL plus reasons
-reviewed/<sha>                   approval markers
+reviewed/<sha>                   approvals that came from a REVIEW PASS
+waived/<sha>                     one-time human approvals (verdict kept)
 held                             the last commit that failed and why
 ```
 
@@ -110,6 +114,33 @@ line with exactly `REVIEW PASS` or `REVIEW FAIL`, followed by one reason per
 line. It never runs from the plugin checkout, so a hostile `.opencode/`
 configuration in the diff cannot execute. Reviewer crash, timeout, or a missing
 verdict line all fail closed.
+
+## Approving a failed review
+
+`approve` is the deliberate escape hatch. It never guesses: without `--sha` it
+takes the commit named in `held`, prints the verdict, structural findings, and
+patch path, then asks for a reason. The reason may be empty; `--reason TEXT`
+skips the prompt, which is also required when stdin is not a terminal. With
+`--show` it prints the patch before asking, and `-n` / `--dry-run` shows the
+decision without changing anything.
+
+```sh
+omarchy-plugin-gate approve my-plugin          # prompt for a reason
+omarchy-plugin-gate approve my-plugin --show   # read the diff first
+omarchy-plugin-gate approve my-plugin --reason "upstream fix I checked"
+omarchy-plugin-gate update -p my-plugin
+```
+
+A waiver is one commit, not a standing trust setting. It lives in
+`waived/<sha>` with the date, user, reason, base commit, and the blob hash of
+the patch that was on screen. The failed verdict is left untouched, so `status`
+shows both `REVIEW FAIL` and `approval waived by hand`. `approve` moves
+`gate-approved` and installs the hooks; `update` still does the installation.
+
+Approval covers the held candidate only. It does not fetch, and `--sha` must
+name a commit that is still reachable from `origin/<branch>`. Structural holds
+can be waived too: the findings are printed first, so read them before you
+answer.
 
 ## Tripwire
 
@@ -161,7 +192,8 @@ reviewer and stub `omarchy` commands, and covers the bootstrap review, clean and
 partial updates, every structural rejection (asserting the model is *not*
 called), reviewer failure and crash, update applying and refusing, the tripwire
 rolling back a rejected pull while leaving local commits alone, notification
-policy, and both `add` outcomes. No network, no real plugin install.
+policy, one-time approvals (including dry run, `--sha`, `--show`, and the
+resulting update), and both `add` outcomes. No network, no real plugin install.
 
 ## Uninstall
 
@@ -177,9 +209,14 @@ the installed copies back at their upstream repositories.
 
 - The reviewer is advisory. The structural checks and the retained patch and
   transcript for every approved commit are the durable record. Read a diff
-  yourself when the gate says `REVIEW FAIL` — the patch path is in `status`.
+  yourself when the gate says `REVIEW FAIL` — use `approve --show` or the patch
+  path in `status`.
 - `origin/main` in a working clone is whatever upstream last published; the gate
   only governs what the installed plugin sees. Anyone with write access to this
   machine can move `gate-approved` by hand.
 - Plugins still run unsandboxed. This gate makes updates reviewable; it does not
   sandbox the plugin.
+
+## License
+
+[MIT](LICENSE).

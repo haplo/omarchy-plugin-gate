@@ -3,6 +3,7 @@
 #
 #   omarchy-plugin-gate add <git-url> [--dir NAME] [--no-enable]
 #   omarchy-plugin-gate check [-p NAME]
+#   omarchy-plugin-gate approve <name> [--sha SHA] [--reason TEXT] [--show] [-n]
 #   omarchy-plugin-gate update [-p NAME]
 #   omarchy-plugin-gate status [-p NAME]
 #   omarchy-plugin-gate doctor [-p NAME] [--fix]
@@ -24,7 +25,7 @@ set -euo pipefail
 
 export GIT_TERMINAL_PROMPT=0
 
-VERSION="0.1.0"
+VERSION="0.2.0"
 SELF=$(readlink -f "${BASH_SOURCE[0]}")
 
 ROOT="${OMARCHY_PLUGIN_GATE_ROOT:-${PLUGIN_GATE_ROOT:-$HOME/Code/omarchy-plugins}}"
@@ -72,6 +73,11 @@ omarchy-plugin-gate — review Omarchy plugin updates before they reach the shel
 
   check [-p NAME]
       Fetch upstream, review new commits, stage approved ones. Never installs.
+
+  approve <name> [--sha SHA] [--reason TEXT] [--show] [-n|--dry-run]
+      One-time human approval for a candidate the gate held back. Shows the
+      verdict and findings, asks why (the answer may be empty), and advances
+      gate-approved. Run update afterwards.
 
   update [-p NAME]
       Apply approved commits to ~/.config/omarchy/plugins/<id> and rescan.
@@ -191,12 +197,39 @@ advance_main() {
 state_dir_of() { printf '%s/%s' "$STATE_ROOT" "$1"; }
 marker_of() { printf '%s/reviewed/%s' "$(state_dir_of "$1")" "$2"; }
 has_marker() { [[ -f $(marker_of "$1" "$2") ]]; }
+waiver_of() { printf '%s/waived/%s' "$(state_dir_of "$1")" "$2"; }
+has_waiver() { [[ -f $(waiver_of "$1" "$2") ]]; }
+has_approval() { has_marker "$1" "$2" || has_waiver "$1" "$2"; }
 
 set_marker() {
   local name=$1 sha=$2 note=${3:-}
   mkdir -p "$(state_dir_of "$name")/reviewed"
   printf 'APPROVED %s %s %s\n' "$(date -Is)" "$sha" "$note" >"$(marker_of "$name" "$sha")"
   rm -f "$(state_dir_of "$name")/held"
+}
+
+# A waiver is a human decision, not a review result. Keep it separate from
+# reviewed/ so status can say plainly that the model failed and a person
+# overrode it, and so a later re-review cannot erase the record.
+set_waiver() {
+  local name=$1 sha=$2 reason=${3:-} base=${4:-} patch=${5:-}
+  local dir heldf who
+  who=${USER:-$(id -un 2>/dev/null || printf unknown)}
+  dir="$(state_dir_of "$name")/waived"
+  mkdir -p "$dir"
+  reason=${reason//$'\n'/ }
+  reason=${reason//$'\r'/ }
+  reason=${reason//$'\t'/ }
+  {
+    printf 'WAIVED %s %s by %s\n' "$(date -Is)" "$sha" "$who"
+    printf 'reason: %s\n' "$reason"
+    if [[ -n $base ]]; then printf 'base: %s\n' "$base"; fi
+    if [[ -n $patch ]]; then printf 'patch-blob: %s\n' "$patch"; fi
+  } >"$(waiver_of "$name" "$sha")"
+  heldf="$(state_dir_of "$name")/held"
+  if [[ -f $heldf && $(head -1 "$heldf") == "$sha" ]]; then
+    rm -f "$heldf"
+  fi
 }
 
 review_dir_of() {
@@ -602,7 +635,7 @@ cmd_post_merge() {
 
   name=$(plugin_for_dir "$dir" || true)
   [[ -n $name ]] || exit 0
-  has_marker "$name" "$new" && exit 0
+  has_approval "$name" "$new" && exit 0
 
   local clone
   clone=$(clone_of "$name")
@@ -696,7 +729,7 @@ check_one() {
     return 0
   fi
 
-  if has_marker "$name" "$head"; then
+  if has_approval "$name" "$head"; then
     git -C "$clone" update-ref "$APPROVED_REF" "$head"
     advance_main "$clone" "$head"
     check_installed_lag "$name" "$head"
@@ -760,6 +793,160 @@ cmd_check() {
   ((errors == 0))
 }
 
+# -------------------------------------------------------------------- approve
+
+cmd_approve() {
+  local want="" sha_arg="" reason="" have_reason=0 show=0 dry=0
+  local name clone branch old held rd patch_hash held_reason sha
+
+  while (($# > 0)); do
+    case $1 in
+    -p | --plugin)
+      want=${2:-}
+      [[ -n $want ]] || die "$1 needs a plugin name"
+      shift 2
+      ;;
+    --sha)
+      sha_arg=${2:-}
+      [[ -n $sha_arg ]] || die "--sha needs a commit"
+      shift 2
+      ;;
+    --reason)
+      reason=${2:-}
+      have_reason=1
+      if (($# > 1)); then shift 2; else shift; fi
+      ;;
+    --reason=*)
+      reason=${1#*=}
+      have_reason=1
+      shift
+      ;;
+    --show)
+      show=1
+      shift
+      ;;
+    -n | --dry-run)
+      dry=1
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    -*)
+      die "unknown option: $1"
+      ;;
+    *)
+      [[ -z $want ]] || die "unexpected argument: $1"
+      want=$1
+      shift
+      ;;
+    esac
+  done
+  [[ -n $want ]] || die "approve needs a plugin name"
+
+  name=$(selected_names "$want" 2>/dev/null || true)
+  [[ -n $name ]] || die "no plugin named '$want' under $ROOT"
+  name=${name%%$'\n'*}
+  clone=$(clone_of "$name")
+
+  held=$(head -1 "$(state_dir_of "$name")/held" 2>/dev/null || true)
+  if [[ -n $sha_arg ]]; then
+    sha=$(git -C "$clone" rev-parse --verify --quiet "${sha_arg}^{commit}" || true)
+    [[ -n $sha ]] || die "'$sha_arg' is not a commit in $clone"
+  else
+    [[ -n $held ]] || die "$name: nothing held back; run: omarchy-plugin-gate check -p $name"
+    sha=$(git -C "$clone" rev-parse --verify --quiet "${held}^{commit}" || true)
+    [[ -n $sha ]] || die "$name: held commit ${held:0:12} is not in $clone"
+  fi
+
+  # Approve only what upstream actually served. Local commits are the
+  # tripwire's business, and an orphaned commit is not something to install.
+  branch=$(default_branch "$clone" 2>/dev/null || true)
+  if [[ -n $branch ]] &&
+    git -C "$clone" rev-parse --verify --quiet "refs/remotes/origin/$branch" >/dev/null; then
+    if ! git -C "$clone" merge-base --is-ancestor "$sha" "refs/remotes/origin/$branch" 2>/dev/null; then
+      die "$name: ${sha:0:12} is not reachable from origin/$branch — refusing"
+    fi
+  fi
+
+  rd=$(review_dir_of "$name" "$sha")
+  say "$name: candidate ${sha:0:12}"
+  if [[ -f $rd/verdict ]]; then
+    info "verdict   $(head -1 "$rd/verdict")"
+    sed -n '2,6p' "$rd/verdict" | sed 's/^/              /'
+  else
+    warn "$name: no review verdict recorded for ${sha:0:12}"
+  fi
+  if [[ -f $rd/mech.txt ]]; then
+    if grep -qx 'PASS structural pre-checks' "$rd/mech.txt"; then
+      info "checks    PASS structural pre-checks"
+    else
+      info "checks    structural findings:"
+      sed 's/^/              /' "$rd/mech.txt"
+    fi
+  fi
+  if [[ -f $rd/patch ]]; then
+    info "patch     $rd/patch"
+  fi
+  if [[ -n $held && $sha == "$held" ]]; then
+    held_reason=$(sed -n '2,6p' "$(state_dir_of "$name")/held" 2>/dev/null || true)
+    if [[ -n $held_reason ]]; then info "held      $held_reason"; fi
+  fi
+
+  if ((show)); then
+    if [[ -f $rd/patch ]]; then
+      say ""
+      say "--- patch ---"
+      cat "$rd/patch"
+      say "--- end patch ---"
+    else
+      warn "$name: no patch recorded for ${sha:0:12}"
+    fi
+  fi
+
+  old=$(approved_sha "$clone")
+  if [[ $old == "$sha" ]] && has_approval "$name" "$sha"; then
+    say "$name: ${sha:0:12} is already approved; nothing to do"
+    return 0
+  fi
+  if [[ -n $old ]] && ! git -C "$clone" merge-base --is-ancestor "$old" "$sha" 2>/dev/null; then
+    warn "$name: gate-approved (${old:0:12}) is not an ancestor of ${sha:0:12}; update may refuse to fast-forward"
+  fi
+
+  if ((dry)); then
+    say ""
+    say "dry run: would waive ${sha:0:12} and move gate-approved${old:+ from ${old:0:12}}; nothing written"
+    return 0
+  fi
+
+  if ((have_reason == 0)); then
+    [[ -t 0 ]] || die "no terminal for the reason prompt; pass --reason (an empty reason is allowed)"
+    printf 'Reason (optional): ' >&2
+    if ! IFS= read -r reason; then
+      say ""
+      die "approval cancelled"
+    fi
+  fi
+  reason=${reason//$'\n'/ }
+  reason=${reason//$'\r'/ }
+  reason=${reason//$'\t'/ }
+
+  patch_hash=""
+  if [[ -f $rd/patch ]]; then
+    patch_hash=$(git -C "$clone" hash-object "$rd/patch" 2>/dev/null || true)
+  fi
+
+  set_waiver "$name" "$sha" "$reason" "$old" "$patch_hash"
+  git -C "$clone" update-ref "$APPROVED_REF" "$sha"
+  advance_main "$clone" "$sha"
+  ensure_hooks "$name"
+  log_event "$name" "waived ${sha:0:12} by ${USER:-$(id -un 2>/dev/null || printf unknown)} reason: ${reason:-<none>}"
+
+  say ""
+  say "Approved ${sha:0:12} by hand. Run: omarchy-plugin-gate update -p $name"
+}
+
 # --------------------------------------------------------------------- update
 
 cmd_update() {
@@ -773,8 +960,8 @@ cmd_update() {
       warn "$name: nothing approved yet (run: omarchy-plugin-gate check -p $name)"
       continue
     fi
-    if ! has_marker "$name" "$approved"; then
-      warn "$name: approved commit $approved has no review record; refusing"
+    if ! has_approval "$name" "$approved"; then
+      warn "$name: approved commit $approved has no review or waiver record; refusing"
       continue
     fi
     idir=$(installed_dir_of "$name")
@@ -820,7 +1007,7 @@ cmd_update() {
       continue
     fi
 
-    set_marker "$name" "$new" "installed"
+    log_event "$name" "installed $new"
     ensure_hooks "$name"
     applied=$((applied + 1))
   done < <(selected_names "$WANT" || true)
@@ -962,6 +1149,7 @@ cmd_add() {
 
 cmd_status() {
   local name clone idir id approved upstream branch inst state verdict rd held
+  local waiver_file waiver_reason
   while IFS= read -r name; do
     [[ -n $name ]] || continue
     clone=$(clone_of "$name")
@@ -989,12 +1177,25 @@ cmd_status() {
       state="held back"
     fi
 
+    waiver_file=""
+    waiver_reason=""
+    if [[ -n $approved ]] && has_waiver "$name" "$approved"; then
+      waiver_file=$(waiver_of "$name" "$approved")
+      waiver_reason=$(sed -n 's/^reason: //p' "$waiver_file" | head -1 || true)
+    fi
+
     say "$name  ($id)"
     info "clone     $clone"
     info "approved  ${approved:0:12}${approved:+  (gate-approved)}"
     info "installed ${inst:0:12}${inst:+  ($idir)}"
     info "upstream  ${upstream:0:12}${branch:+  (origin/$branch, as of the last check)}"
     info "state     $state"
+    if [[ -n $waiver_file ]]; then
+      info "approval  waived by hand${waiver_reason:+ — $waiver_reason}"
+    fi
+    if [[ $state == "held back" ]]; then
+      info "next      omarchy-plugin-gate approve -p $name   (or check -p $name to retry)"
+    fi
     if [[ $verdict == "REVIEW FAIL"* ]]; then
       info "last review: $verdict"
       rd=$(latest_review_dir "$name")
@@ -1159,6 +1360,9 @@ main() {
   case $cmd in
   add)
     cmd_add "$@"
+    ;;
+  approve)
+    cmd_approve "$@"
     ;;
   check | update | status | doctor)
     set_sub_args "$@"

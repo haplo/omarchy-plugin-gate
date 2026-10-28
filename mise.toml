@@ -18,6 +18,10 @@ run = "scripts/uninstall.sh"
 description = "Review upstream changes for every cloned plugin"
 run = "bin/omarchy-plugin-gate check"
 
+[tasks.approve]
+description = "Approve one held candidate by hand, after reading its evidence"
+run = "bin/omarchy-plugin-gate approve"
+
 [tasks.update]
 description = "Apply approved commits to the installed plugins"
 run = "bin/omarchy-plugin-gate update"
