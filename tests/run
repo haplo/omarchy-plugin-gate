@@ -241,7 +241,7 @@ case_uncleared() { # case_uncleared <label> <expression> <expected reason substr
 
 # --- tests -------------------------------------------------------------------
 printf '\n== default root ==\n'
-out=$(env -u OMARCHY_PLUGIN_GATE_ROOT -u PLUGIN_GATE_ROOT HOME="$B/home" "$GATE" check 2>&1)
+out=$(env -u OMARCHY_PLUGIN_GATE_ROOT HOME="$B/home" "$GATE" check 2>&1)
 eq 'root defaults to ~/Work/omarchy-plugins' "$out" "No plugins under $B/home/Work/omarchy-plugins."
 
 printf '\n== bootstrap ==\n'
@@ -367,6 +367,20 @@ OMARCHY_PLUGIN_GATE_MODEL=venice/whatever "$GATE" check >/dev/null 2>&1
 has "$STUB_LOG" '-m venice/whatever' 'model passed to the reviewer'
 reset_upstream "$base"
 
+printf '\n== options beat the environment ==\n'
+base=$(ap)
+reset_upstream "$base"
+commit_upstream 'printf "// options\n" >> Widget.qml' options
+OMARCHY_PLUGIN_GATE_ROOT=$B/nowhere OMARCHY_PLUGIN_GATE_STATE=$B/wrong-state \
+  OMARCHY_PLUGIN_GATE_MODEL=venice/env OMARCHY_PLUGIN_GATE_TIMEOUT=soon \
+  "$GATE" --root "$B/root" --model venice/flag check --state "$B/state" --timeout 60 >/dev/null 2>&1
+eq 'check exits 0' "$?" 0
+eq '--root finds the clone' "$(ap)" "$(upstream_sha)"
+[[ -f "$B/state/demo/reviewed/$(ap)" ]] && ok '--state receives the marker' || no '--state receives the marker'
+[[ ! -e "$B/wrong-state" ]] && ok 'environment state unused' || no 'environment state unused'
+has "$STUB_LOG" '-m venice/flag' '--model passed to the reviewer'
+reset_upstream "$(ap)"
+
 printf '\n== doctor checks the reviewer agent ==\n'
 agent=$B/cfg/opencode/agents/plugin-reviewer.md
 mkdir -p "$(dirname "$agent")"
@@ -416,15 +430,18 @@ has <(printf '%s' "$out") 'no review or waiver record' 'refusal explained'
 printf '\n== tripwire ==\n'
 [[ -x "$B/root/demo/.git/hooks/post-merge" ]] && ok 'hook in the clone' || no 'hook in the clone'
 [[ -x "$idir/.git/hooks/post-merge" ]] && ok 'hook in the installed copy' || no 'hook in the installed copy'
+has "$B/root/demo/.git/hooks/post-merge" "--root $B/root --state $B/state _post-merge" 'hook records root and state'
 base=$(git -C "$B/root/demo" rev-parse HEAD)
 commit_upstream 'printf "// NEEDS-HUMAN\n" >> Widget.qml' 'bad pull'
 STUB_FAIL_ON=NEEDS-HUMAN bash -c "cd '$B/root/demo' && git pull -q --ff-only origin main" >/dev/null 2>&1
 eq 'rejected pull rolled back' "$(git -C "$B/root/demo" rev-parse HEAD)" "$base"
 commit_upstream 'printf "// fine\n" >> Widget.qml' 'good pull'
 good=$(git -C "$B/upstream" rev-parse HEAD)
-bash -c "cd '$B/root/demo' && git pull -q --ff-only origin main" >/dev/null 2>&1
+OMARCHY_PLUGIN_GATE_ROOT=$B/nowhere OMARCHY_PLUGIN_GATE_STATE=$B/wrong-state \
+  bash -c "cd '$B/root/demo' && git pull -q --ff-only origin main" >/dev/null 2>&1
 eq 'clean pull kept' "$(git -C "$B/root/demo" rev-parse HEAD)" "$good"
-[[ -f "$B/state/demo/reviewed/$good" ]] && ok 'hook wrote a marker' || no 'hook wrote a marker'
+[[ -f "$B/state/demo/reviewed/$good" ]] && ok 'hook wrote a marker in its recorded state' || no 'hook wrote a marker in its recorded state'
+[[ ! -e "$B/wrong-state" ]] && ok 'hook ignores the environment paths' || no 'hook ignores the environment paths'
 
 printf '\n== notifications ==\n'
 export OMARCHY_PLUGIN_GATE_NOTIFY=all

@@ -1,8 +1,8 @@
-"""Settings, read once from the environment."""
+"""Settings, read once from the command line and the environment."""
 
 import getpass
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 from .output import GateError
@@ -21,17 +21,44 @@ DEFAULT_TIMEOUT = 420
 DEFAULT_MAX_PATCH = 2 * 1024 * 1024
 
 
-def _first(env: Mapping[str, str], *names: str) -> str:
-    """The first non-empty variable, like ${A:-${B:-}} in a shell."""
-    for name in names:
-        value = env.get(name, "")
-        if value:
-            return value
-    return ""
+@dataclass(frozen=True, slots=True)
+class Overrides:
+    """Settings given on the command line; None means the flag was not given.
+
+    Each field is the flag `--<name>` (underscores become dashes) and overrides
+    the variable `OMARCHY_PLUGIN_GATE_<NAME>`.
+    """
+
+    root: str | None = None
+    state: str | None = None
+    agent: str | None = None
+    model: str | None = None
+    notify: str | None = None
+    timeout: str | None = None
+    max_patch: str | None = None
 
 
-def _positive_int(env: Mapping[str, str], name: str, default: int, what: str) -> int:
-    raw = env.get(name, "")
+def option_flag(field: str) -> str:
+    return "--" + field.replace("_", "-")
+
+
+def env_var(field: str) -> str:
+    return "OMARCHY_PLUGIN_GATE_" + field.upper()
+
+
+SETTING_FIELDS = tuple(f.name for f in fields(Overrides))
+
+
+def _setting(overrides: Overrides, env: Mapping[str, str], field: str) -> tuple[str, str]:
+    """The value of one setting and where it came from: the flag beats the
+    environment, and an empty variable counts as unset."""
+    value = getattr(overrides, field)
+    if value is not None:
+        return value, option_flag(field)
+    return env.get(env_var(field), ""), env_var(field)
+
+
+def _positive_int(raw: str, source: str, default: int, what: str) -> int:
     if not raw:
         return default
     try:
@@ -39,7 +66,7 @@ def _positive_int(env: Mapping[str, str], name: str, default: int, what: str) ->
     except ValueError:
         value = 0
     if value <= 0:
-        raise GateError(f"{name} must be a positive whole number of {what}, not '{raw}'")
+        raise GateError(f"{source} must be a positive whole number of {what}, not '{raw}'")
     return value
 
 
@@ -78,31 +105,34 @@ class Config:
         return self.self_path.parent.parent / "agents" / "plugin-reviewer.md.in"
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str], self_path: Path) -> Config:
+    def from_env(
+        cls, env: Mapping[str, str], self_path: Path, overrides: Overrides | None = None
+    ) -> Config:
+        over = overrides or Overrides()
         home = Path(env.get("HOME") or Path.home())
-        state_home = Path(_first(env, "XDG_STATE_HOME") or home / ".local" / "state")
-        config_home = Path(_first(env, "XDG_CONFIG_HOME") or home / ".config")
-        root = _first(env, "OMARCHY_PLUGIN_GATE_ROOT", "PLUGIN_GATE_ROOT")
-        state = _first(env, "OMARCHY_PLUGIN_GATE_STATE")
-        notify = _first(env, "OMARCHY_PLUGIN_GATE_NOTIFY", "PLUGIN_GATE_NOTIFY") or "all"
+        state_home = Path(env.get("XDG_STATE_HOME") or home / ".local" / "state")
+        config_home = Path(env.get("XDG_CONFIG_HOME") or home / ".config")
+        root, _ = _setting(over, env, "root")
+        state, _ = _setting(over, env, "state")
+        agent, _ = _setting(over, env, "agent")
+        model, _ = _setting(over, env, "model")
+        notify, notify_source = _setting(over, env, "notify")
+        notify = notify or "all"
         if notify not in NOTIFY_POLICIES:
             raise GateError(
-                f"OMARCHY_PLUGIN_GATE_NOTIFY must be one of {', '.join(NOTIFY_POLICIES)}, "
-                f"not '{notify}'"
+                f"{notify_source} must be one of {', '.join(NOTIFY_POLICIES)}, not '{notify}'"
             )
+        timeout, timeout_source = _setting(over, env, "timeout")
+        max_patch, max_patch_source = _setting(over, env, "max_patch")
         return cls(
             root=Path(root) if root else home / "Work" / "omarchy-plugins",
             state_root=Path(state) if state else state_home / "omarchy-plugin-gate",
             config_home=config_home,
-            agent=_first(env, "OMARCHY_PLUGIN_GATE_AGENT") or "plugin-reviewer",
-            model=_first(env, "OMARCHY_PLUGIN_GATE_MODEL"),
+            agent=agent or "plugin-reviewer",
+            model=model,
             notify_policy=notify,
-            review_timeout=_positive_int(
-                env, "OMARCHY_PLUGIN_GATE_TIMEOUT", DEFAULT_TIMEOUT, "seconds"
-            ),
-            max_patch_bytes=_positive_int(
-                env, "OMARCHY_PLUGIN_GATE_MAX_PATCH", DEFAULT_MAX_PATCH, "bytes"
-            ),
+            review_timeout=_positive_int(timeout, timeout_source, DEFAULT_TIMEOUT, "seconds"),
+            max_patch_bytes=_positive_int(max_patch, max_patch_source, DEFAULT_MAX_PATCH, "bytes"),
             self_path=self_path,
             user=_current_user(env),
         )

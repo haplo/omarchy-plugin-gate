@@ -78,7 +78,7 @@ def doctor_one(ctx: Context, name: str, fix: bool) -> bool:
             else:
                 bad(f"could not install tripwire in {label}")
         else:
-            bad(f"no tripwire in {label} (run doctor --fix)")
+            bad(f"no current tripwire in {label} (run doctor --fix)")
             problems += 1
 
     return problems == 0

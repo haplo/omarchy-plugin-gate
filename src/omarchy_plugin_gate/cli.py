@@ -10,12 +10,14 @@ from typing import NoReturn
 
 from . import __version__, proc
 from .commands import add, approve, check, doctor, post_merge, status, update
-from .config import Config
+from .config import SETTING_FIELDS, Config, Overrides, option_flag
 from .context import Context
 from .output import GateError, say, warn
 
 USAGE = """\
 omarchy-plugin-gate — review Omarchy plugin updates before they reach the shell
+
+usage: omarchy-plugin-gate [options] <command> [command options] [options]
 
   add <git-url> [--dir NAME] [--no-enable]
       Clone into the gate root, review the initial tree, install it disabled,
@@ -41,12 +43,16 @@ omarchy-plugin-gate — review Omarchy plugin updates before they reach the shel
       Verify the wiring (hooks, origin, refs, reviewer model). --fix installs
       missing hooks.
 
-Environment:
-  OMARCHY_PLUGIN_GATE_ROOT     gate root      (default ~/Work/omarchy-plugins)
-  OMARCHY_PLUGIN_GATE_MODEL    reviewer model (default: OpenCode's default)
-  OMARCHY_PLUGIN_GATE_NOTIFY   all|ready|none (default all)
-  OMARCHY_PLUGIN_GATE_TIMEOUT  reviewer timeout in seconds (default 420)
-  OMARCHY_PLUGIN_GATE_MAX_PATCH  patch size limit in bytes (default 2097152)
+Options, before or after the command. Each overrides its environment variable:
+  --root DIR         OMARCHY_PLUGIN_GATE_ROOT       gate root
+                                                    (default ~/Work/omarchy-plugins)
+  --state DIR        OMARCHY_PLUGIN_GATE_STATE      evidence and markers
+                                                    (default ~/.local/state/omarchy-plugin-gate)
+  --agent NAME       OMARCHY_PLUGIN_GATE_AGENT      reviewer agent (default plugin-reviewer)
+  --model ID         OMARCHY_PLUGIN_GATE_MODEL      reviewer model (default: OpenCode's default)
+  --notify POLICY    OMARCHY_PLUGIN_GATE_NOTIFY     all|ready|none (default all)
+  --timeout SECONDS  OMARCHY_PLUGIN_GATE_TIMEOUT    reviewer timeout (default 420)
+  --max-patch BYTES  OMARCHY_PLUGIN_GATE_MAX_PATCH  patch size limit (default 2097152)
 """
 
 
@@ -57,10 +63,50 @@ class _Parser(argparse.ArgumentParser):
         raise GateError(message)
 
 
+SETTING_FLAGS = {option_flag(field): field for field in SETTING_FIELDS}
+
+
+def _setting_options(p: argparse.ArgumentParser) -> None:
+    for name, field in SETTING_FLAGS.items():
+        p.add_argument(name, dest=field, default=None)
+
+
 def _parser(prog: str) -> _Parser:
     p = _Parser(prog=f"omarchy-plugin-gate {prog}", add_help=False, allow_abbrev=False)
     p.add_argument("-h", "--help", action="store_true")
+    _setting_options(p)
     return p
+
+
+def _split_settings(argv: Sequence[str]) -> tuple[list[str], list[str]]:
+    """Separate the setting options given before the command from the rest."""
+    i = 0
+    while i < len(argv):
+        name, eq, _ = argv[i].partition("=")
+        if name not in SETTING_FLAGS:
+            break
+        i += 1 if eq else 2
+    return list(argv[:i]), list(argv[i:])
+
+
+def _parse_settings(args: Sequence[str]) -> argparse.Namespace:
+    p = _Parser(prog="omarchy-plugin-gate", add_help=False, allow_abbrev=False)
+    _setting_options(p)
+    return p.parse_args(list(args))
+
+
+def _overrides(*namespaces: argparse.Namespace) -> Overrides:
+    """Merge setting options; a later namespace wins over an earlier one."""
+    values: dict[str, str] = {}
+    for ns in namespaces:
+        for name, field in SETTING_FLAGS.items():
+            value = getattr(ns, field, None)
+            if value is None:
+                continue
+            if value == "":
+                raise GateError(f"{name} needs a value")
+            values[field] = value
+    return Overrides(**values)
 
 
 def _plugin_option(p: argparse.ArgumentParser) -> None:
@@ -100,12 +146,14 @@ def _parse(prog: str, args: Sequence[str]) -> argparse.Namespace | None:
     return ns
 
 
-def _context(self_path: Path) -> Context:
-    return Context.create(Config.from_env(os.environ, self_path))
+def _context(self_path: Path, *namespaces: argparse.Namespace) -> Context:
+    return Context.create(Config.from_env(os.environ, self_path, _overrides(*namespaces)))
 
 
 def dispatch(self_path: Path, argv: Sequence[str]) -> int:
-    cmd, args = (argv[0], argv[1:]) if argv else ("", [])
+    leading, rest = _split_settings(argv)
+    lead = _parse_settings(leading)
+    cmd, args = (rest[0], rest[1:]) if rest else ("", [])
     match cmd:
         case "" | "-h" | "--help" | "help":
             say(USAGE.rstrip("\n"))
@@ -114,12 +162,13 @@ def dispatch(self_path: Path, argv: Sequence[str]) -> int:
             say(__version__)
             return 0
         case "_post-merge":
-            return post_merge.run(_context(self_path), args[0] if args else "")
+            return post_merge.run(_context(self_path, lead), args[0] if args else "")
         case "add":
             if (ns := _parse(cmd, args)) is None:
                 return 0
             return add.run(
-                _context(self_path), add.AddArgs(ns.url, dir=ns.dir, enable=not ns.no_enable)
+                _context(self_path, lead, ns),
+                add.AddArgs(ns.url, dir=ns.dir, enable=not ns.no_enable),
             )
         case "approve":
             if (ns := _parse(cmd, args)) is None:
@@ -127,7 +176,7 @@ def dispatch(self_path: Path, argv: Sequence[str]) -> int:
             if ns.name and ns.plugin:
                 raise GateError(f"unexpected argument: {ns.name}")
             return approve.run(
-                _context(self_path),
+                _context(self_path, lead, ns),
                 approve.ApproveArgs(
                     ns.name or ns.plugin,
                     sha=ns.sha,
@@ -139,7 +188,7 @@ def dispatch(self_path: Path, argv: Sequence[str]) -> int:
         case "check" | "update" | "status" | "doctor":
             if (ns := _parse(cmd, args)) is None:
                 return 0
-            ctx = _context(self_path)
+            ctx = _context(self_path, lead, ns)
             if cmd == "check":
                 return check.run(ctx, ns.plugin)
             if cmd == "update":

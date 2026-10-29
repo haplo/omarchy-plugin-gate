@@ -99,7 +99,7 @@ held                             the last commit that failed and why
 
 *Hard failures* are an immediate `REVIEW FAIL`; the reviewer is never called:
 
-- diffs larger than `OMARCHY_PLUGIN_GATE_MAX_PATCH` (default 2 MiB, sized for a
+- diffs larger than `--max-patch` (default 2 MiB, sized for a
   reviewer model with a 1M-token context), which the reviewer could not read in
   full
 - diffs that are not valid UTF-8, which OpenCode would not hand to the reviewer
@@ -190,16 +190,33 @@ plugin. Commits you authored yourself are never reviewed or rolled back.
 This is a net, not the main gate: `omarchy-shell` may already have rescanned by
 the time a hook finishes. The gate is what prevents bad code from arriving.
 
-## Environment
+## Settings
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `OMARCHY_PLUGIN_GATE_ROOT` | `~/Work/omarchy-plugins` | where working clones live |
-| `OMARCHY_PLUGIN_GATE_MODEL` | OpenCode's default | model for the reviewer, e.g. `venice/claude-opus-4-7` |
-| `OMARCHY_PLUGIN_GATE_NOTIFY` | `all` | `all`, `ready`, or `none` |
-| `OMARCHY_PLUGIN_GATE_TIMEOUT` | `420` | reviewer timeout, seconds |
-| `OMARCHY_PLUGIN_GATE_MAX_PATCH` | `2097152` | largest diff that is auto-reviewed; assumes a 1M-token model, so lower it for smaller ones (about 3 bytes per token, minus headroom) |
-| `OMARCHY_PLUGIN_GATE_STATE` | `~/.local/state/omarchy-plugin-gate` | evidence and markers |
+Every setting can be given as an option or an environment variable. Options go
+before or after the command and win over the environment; an option given on
+both sides of the command takes the value after it. An empty variable counts as
+unset.
+
+```sh
+omarchy-plugin-gate --model venice/claude-opus-4-7 check
+omarchy-plugin-gate check -p omasync --timeout 900
+```
+
+| Option | Variable | Default | Purpose |
+|---|---|---|---|
+| `--root DIR` | `OMARCHY_PLUGIN_GATE_ROOT` | `~/Work/omarchy-plugins` | where working clones live |
+| `--state DIR` | `OMARCHY_PLUGIN_GATE_STATE` | `~/.local/state/omarchy-plugin-gate` | evidence and markers |
+| `--agent NAME` | `OMARCHY_PLUGIN_GATE_AGENT` | `plugin-reviewer` | OpenCode agent that reviews, read from `~/.config/opencode/agents/<name>.md` |
+| `--model ID` | `OMARCHY_PLUGIN_GATE_MODEL` | OpenCode's default | model for the reviewer, e.g. `venice/claude-opus-4-7` |
+| `--notify POLICY` | `OMARCHY_PLUGIN_GATE_NOTIFY` | `all` | `all`, `ready`, or `none` |
+| `--timeout SECONDS` | `OMARCHY_PLUGIN_GATE_TIMEOUT` | `420` | reviewer timeout, seconds |
+| `--max-patch BYTES` | `OMARCHY_PLUGIN_GATE_MAX_PATCH` | `2097152` | largest diff that is auto-reviewed; assumes a 1M-token model, so lower it for smaller ones (about 3 bytes per token, minus headroom) |
+
+Tripwire hooks record the root and state of the run that installed them, so a
+merge reviewed by the hook uses the same clones and evidence directory whatever
+the environment of the `git pull`. `check`, `approve` and `update` rewrite
+hooks that record a different root or state; `doctor` reports them and
+`doctor --fix` rewrites them.
 
 Re-run `mise run install` after pulling a change to the reviewer agent;
 `doctor` reports an installed agent that no longer matches the repository.
@@ -253,7 +270,8 @@ reviewer and stub `omarchy` commands, and covers the bootstrap review, clean and
 partial updates, every hard structural failure (asserting the model is *not*
 called), every kind of structural finding reaching the reviewer, each way a
 reviewer can fail to clear a finding, a missing, wrong or planted code word,
-reviewer failure and crash, the reviewer's working directory, `doctor`
+reviewer failure and crash, the reviewer's working directory, options winning
+over the environment, `doctor`
 spotting a stale reviewer agent, update applying and refusing, the tripwire
 rolling back a rejected pull while leaving local commits alone, notification
 policy, one-time approvals (including dry run, `--sha`, `--show`, and the

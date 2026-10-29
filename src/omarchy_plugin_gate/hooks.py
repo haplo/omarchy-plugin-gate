@@ -15,8 +15,16 @@ def hook_path(directory: Path) -> Path | None:
     return hooks / "post-merge" if hooks else None
 
 
-def hook_text(cfg: Config, name: str) -> str:
+def _command(cfg: Config) -> str:
+    """The hook's gate invocation. The root and state are fixed when the hook is
+    written, so the tripwire uses the same paths as the run that installed it."""
     gate = shlex.quote(str(cfg.self_path))
+    root = shlex.quote(str(cfg.root))
+    state = shlex.quote(str(cfg.state_root))
+    return f"{gate} --root {root} --state {state} _post-merge"
+
+
+def hook_text(cfg: Config, name: str) -> str:
     state = shlex.quote(str(cfg.state_root))
     log = shlex.quote(str(cfg.state_root / "hooks.log"))
     return f"""\
@@ -24,17 +32,17 @@ def hook_text(cfg: Config, name: str) -> str:
 # Installed by omarchy-plugin-gate for {printable(name)}. Reviews out-of-band merges.
 top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 mkdir -p {state}
-exec {gate} _post-merge "$top" >>{log} 2>&1
+exec {_command(cfg)} "$top" >>{log} 2>&1
 """
 
 
 def hook_ok(cfg: Config, directory: Path) -> bool:
-    """Installed and pointing at this binary."""
+    """Installed, pointing at this binary, and using this root and state."""
     path = hook_path(directory)
     if path is None or not path.is_file():
         return False
     try:
-        return str(cfg.self_path) in path.read_text(encoding="utf-8", errors="replace")
+        return _command(cfg) in path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
 

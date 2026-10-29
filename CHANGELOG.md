@@ -6,15 +6,22 @@ All notable changes to omarchy-plugin-gate. The format follows
 
 ## [0.3.0] - 2026-10-29
 
+### Added
+
+- Every setting is also an option: `--root`, `--state`, `--agent`, `--model`,
+  `--notify`, `--timeout` and `--max-patch`. They go before or after the
+  command, win over the matching `OMARCHY_PLUGIN_GATE_*` variable, and take
+  the value after the command when given on both sides. An empty value is an
+  error. `OMARCHY_PLUGIN_GATE_AGENT` is now documented.
+
 ### Changed
 
 - Rewritten in Python. The gate runs on the system `python3` (3.14 or newer,
   Omarchy's) with the standard library only; `bin/omarchy-plugin-gate` is now a
   launcher that runs the code in `src/omarchy_plugin_gate/` with `python3 -I`,
   so `PYTHONPATH`, user site-packages and the working directory cannot inject
-  code. Commands, flags, environment variables, exit codes, messages, the state
-  layout and its file formats are unchanged; existing clones, evidence, waivers
-  and tripwire hooks keep working without reinstalling.
+  code. Commands, exit codes, messages, the state layout and its file formats
+  are unchanged; existing clones, evidence and waivers keep working.
 - Requirements are now `python3` and `git`. `jq` is no longer needed at
   runtime (the fixture suite still uses it). `install.sh` checks the Python
   version.
@@ -35,8 +42,14 @@ All notable changes to omarchy-plugin-gate. The format follows
   whichever review directory changed last, and a review marker's note reads
   `update from <base>` (it was `update<base>`).
 - The reviewer's stdin is `/dev/null`, as it already was under the timer.
-- New tripwire hooks quote their paths and create the state directory before
-  logging to it. Hooks written by 0.2.0 are still recognised.
+- Tripwire hooks quote their paths, create the state directory before logging
+  to it, and pass the gate root and state directory of the run that installed
+  them as `--root` and `--state`, so a hook reviews with the same paths whatever
+  the environment of the `git pull`. Hooks written by 0.2.0, or with a
+  different root or state, are out of date: `check`, `approve` and `update`
+  rewrite them, and `doctor` reports them until `doctor --fix` does.
+- Invalid setting messages name the option or variable that supplied the value,
+  for example `--timeout must be a positive whole number of seconds`.
 
 ### Fixed
 
