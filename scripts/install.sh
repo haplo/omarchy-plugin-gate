@@ -43,6 +43,9 @@ while (($# > 0)); do
 done
 
 command -v git >/dev/null 2>&1 || { echo "install: git is required" >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "install: python3 is required" >&2; exit 1; }
+python3 -c 'import sys; sys.exit(sys.version_info < (3, 14))' ||
+  { echo "install: python 3.14 or newer is required (found $(python3 -V 2>&1))" >&2; exit 1; }
 [[ -f $REPO/bin/omarchy-plugin-gate ]] || { echo "install: missing $REPO/bin/omarchy-plugin-gate" >&2; exit 1; }
 
 mkdir -p "$BIN_DIR" "$STATE_DIR" "$UNIT_DIR" "$(dirname "$AGENT_FILE")"

@@ -1,0 +1,123 @@
+from pathlib import Path
+
+import pytest
+
+from omarchy_plugin_gate.git import Repo, parse_numstat_z, parse_raw_z
+from support import Upstream, git
+
+Z40 = "0" * 40
+B40 = "b" * 40
+
+
+def test_parse_raw_z_plain_and_rename() -> None:
+    data = (
+        f":000000 100755 {Z40} {B40} A\0new tool\0".encode()
+        + f":100644 100644 {B40} {B40} R087\0old.qml\0.ssh/x\0".encode()
+    )
+    assert parse_raw_z(data) == [
+        ("A", "new tool", "000000", "100755", B40, None),
+        ("R", ".ssh/x", "100644", "100644", B40, "old.qml"),
+    ]
+
+
+def test_parse_raw_z_rejects_garbage() -> None:
+    with pytest.raises(ValueError, match="unexpected raw diff record"):
+        parse_raw_z(b"garbage\0")
+
+
+def test_parse_numstat_z() -> None:
+    data = b"1\t0\ta\tb.qml\0-\t-\tpayload.bin\0" + b"2\t1\t\0old.qml\0new.qml\0"
+    assert parse_numstat_z(data) == {"a\tb.qml": False, "payload.bin": True, "new.qml": False}
+
+
+def test_parse_keeps_undecodable_bytes() -> None:
+    data = f":000000 100644 {Z40} {B40} A\0".encode() + b"caf\xe9.qml\0"
+    (_, path, *_rest) = parse_raw_z(data)[0]
+    assert path.encode("utf-8", "surrogateescape") == b"caf\xe9.qml"
+
+
+def test_changes_with_awkward_paths(upstream: Upstream) -> None:
+    base = git(upstream.path, "rev-parse", "HEAD")
+    upstream.write("line\nbreak.desktop", "x\n")
+    upstream.write("tab\there.qml", "x\n")
+    upstream.write("caf\u00e9 \u2603.qml", "x\n")
+    upstream.write(b"raw\xff.qml", "x\n")
+    upstream.write("tool", "payload\n", mode=0o755)
+    upstream.write("payload.bin", b"a\0b\0c\0")
+    new = upstream.commit("awkward")
+    changes = {c.path: c for c in upstream.repo.changes(base, new)}
+    assert set(changes) >= {
+        "line\nbreak.desktop",
+        "tab\there.qml",
+        "caf\u00e9 \u2603.qml",
+        "raw\udcff.qml",
+        "tool",
+        "payload.bin",
+    }
+    assert changes["tool"].became_executable
+    assert not changes["tool"].binary
+    assert changes["payload.bin"].binary
+
+
+def test_rename_reports_destination(upstream: Upstream) -> None:
+    base = git(upstream.path, "rev-parse", "HEAD")
+    git(upstream.path, "mv", "Widget.qml", "authorized_keys")
+    new = upstream.commit("rename")
+    (change,) = upstream.repo.changes(base, new)
+    assert change.status == "R"
+    assert change.path == "authorized_keys"
+    assert change.old_path == "Widget.qml"
+
+
+def test_mode_change_counts_as_becoming_executable(upstream: Upstream) -> None:
+    base = git(upstream.path, "rev-parse", "HEAD")
+    (upstream.path / "Widget.qml").chmod(0o755)
+    new = upstream.commit("chmod")
+    (change,) = upstream.repo.changes(base, new)
+    assert change.became_executable
+
+
+def test_gitattributes_cannot_hide_code(upstream: Upstream) -> None:
+    # A plugin's .gitattributes must not turn its code into "Binary files differ".
+    upstream.write(".gitattributes", "*.qml -diff\n")
+    base = upstream.commit("attributes")
+    upstream.write("Widget.qml", "import QtQuick\nItem { Component.onCompleted: evil() }\n")
+    new = upstream.commit("hidden change")
+    patch = upstream.repo.diff(base, new)
+    assert b"evil()" in patch
+    (change,) = upstream.repo.changes(base, new)
+    assert not change.binary
+
+
+def test_user_config_does_not_change_the_patch(upstream: Upstream, tmp_path: Path) -> None:
+    base = git(upstream.path, "rev-parse", "HEAD")
+    upstream.write("Widget.qml", "import QtQuick\nItem { width: 1 }\n")
+    new = upstream.commit("edit")
+    git(upstream.path, "config", "color.ui", "always")
+    git(upstream.path, "config", "diff.noprefix", "true")
+    patch = upstream.repo.diff(base, new)
+    assert b"\x1b[" not in patch
+    assert b"diff --git a/Widget.qml b/Widget.qml" in patch
+
+
+def test_rev_does_not_take_options(upstream: Upstream) -> None:
+    assert upstream.repo.rev("--output=/tmp/x") is None
+    assert upstream.repo.commit("HEAD") == git(upstream.path, "rev-parse", "HEAD")
+
+
+def test_hook_environment_does_not_redirect_git(
+    upstream: Upstream, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    other = Upstream(tmp_path / "other")
+    other.write("x", "y")
+    other.commit()
+    monkeypatch.setenv("GIT_DIR", str(other.path / ".git"))
+    assert upstream.repo.head() == git(upstream.path, "--git-dir", ".git", "rev-parse", "HEAD")
+
+
+def test_default_branch_falls_back_to_main(upstream: Upstream, tmp_path: Path) -> None:
+    clone = tmp_path / "clone"
+    git(tmp_path, "clone", "-q", str(upstream.path), str(clone))
+    assert Repo(clone).default_branch() == "main"
+    git(clone, "remote", "set-head", "origin", "-d")
+    assert Repo(clone).default_branch() == "main"

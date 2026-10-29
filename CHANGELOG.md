@@ -4,6 +4,76 @@ All notable changes to omarchy-plugin-gate. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-10-29
+
+### Changed
+
+- Rewritten in Python. The gate runs on the system `python3` (3.14 or newer,
+  Omarchy's) with the standard library only; `bin/omarchy-plugin-gate` is now a
+  launcher that runs the code in `src/omarchy_plugin_gate/` with `python3 -I`,
+  so `PYTHONPATH`, user site-packages and the working directory cannot inject
+  code. Commands, flags, environment variables, exit codes, messages, the state
+  layout and its file formats are unchanged; existing clones, evidence, waivers
+  and tripwire hooks keep working without reinstalling.
+- Requirements are now `python3` and `git`. `jq` is no longer needed at
+  runtime (the fixture suite still uses it). `install.sh` checks the Python
+  version.
+- Development tooling: pytest unit tests alongside the fixture suite, `ruff`
+  for formatting and linting, `ty` for type checking, all locked in `uv.lock`.
+  `mise.toml` pins `uv` and adds `sync`, `test:unit`, `test:fixture` and `fmt`
+  tasks; `lint` now runs `ruff` and `ty` as well as `bash -n`, and `test` runs
+  both suites. `GATE=<path> tests/run` runs the fixture suite against another
+  build.
+- Invalid settings are rejected up front instead of failing halfway:
+  `OMARCHY_PLUGIN_GATE_TIMEOUT` and `OMARCHY_PLUGIN_GATE_MAX_PATCH` must be
+  positive whole numbers (the timeout no longer accepts `timeout(1)` suffixes
+  such as `7m`), and `OMARCHY_PLUGIN_GATE_NOTIFY` must be `all`, `ready` or
+  `none`.
+- Argument errors are reported by `argparse`, so their wording differs; they
+  still exit 1. An unknown `-p` name prints one error instead of two.
+- `held` takes its reasons from the candidate's own verdict rather than from
+  whichever review directory changed last, and a review marker's note reads
+  `update from <base>` (it was `update<base>`).
+- The reviewer's stdin is `/dev/null`, as it already was under the timer.
+- New tripwire hooks quote their paths and create the state directory before
+  logging to it. Hooks written by 0.2.0 are still recognised.
+
+### Fixed
+
+- An error in the middle of a review could be ignored, because bash disables
+  `set -e` inside a function called from an `if`. A failed `git diff`, for
+  example, left an empty patch for the reviewer. Any error during a review is
+  now a `REVIEW FAIL` that records the error.
+- When the reviewer exited non-zero after printing `REVIEW PASS`, the verdict
+  file still began with `REVIEW PASS`, so `status` and `approve` showed a pass.
+  The first line is now `REVIEW FAIL`, followed by the failure and the
+  reviewer's ignored answer.
+- A reviewer timeout now kills the reviewer's whole process group, including
+  anything it spawned, and the verdict says it timed out.
+- File names come from NUL-separated git output instead of quoted text. Paths
+  with newlines, tabs, quotes or non-UTF-8 bytes are matched against the
+  protected-path list as they really are, and are escaped in findings, so a
+  file name can no longer forge extra lines in `findings.txt` or the prompt.
+- A plugin's `.gitattributes` can no longer hide code: diffs and archives ignore
+  attributes, so `*.qml -diff` does not reduce a change to "Binary files
+  differ", and `export-ignore`/`export-subst` cannot alter the tree that is
+  validated. The user's git config (`color.ui=always`, `diff.noprefix`, external
+  diff drivers, textconv) no longer changes the patch either.
+- The candidate tree is extracted for validation with Python's `data` tar
+  filter, so links that point outside it are a hard failure instead of being
+  followed.
+- A candidate whose `manifest.json` is missing or not a JSON object is a hard
+  failure even when `omarchy` is not on `PATH`, as are an `entryPoints` that is
+  not an object and entry points that are not strings.
+- git variables set for hooks (`GIT_DIR`, `GIT_INDEX_FILE` and the rest of
+  `git rev-parse --local-env-vars`) are removed from every child process, so the
+  tripwire always acts on the repository it was asked about.
+- `approve --sha` passes the commit to git after `--end-of-options`, so it
+  cannot be read as an option.
+- State files (markers, waivers, `held`, evidence) are written atomically, and
+  newlines in log messages, waiver reasons and marker notes are flattened so
+  one event stays one line.
+
 ## [0.2.0] - 2026-10-28
 
 ### Added
@@ -99,5 +169,6 @@ Initial release.
 - A nightly systemd user timer for `check`, desktop notifications, mise tasks,
   install and uninstall scripts, and a fixture test suite.
 
+[0.3.0]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/haplo/omarchy-plugin-gate/releases/tag/v0.1.0

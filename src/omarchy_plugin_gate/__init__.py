@@ -1,0 +1,3 @@
+"""Review Omarchy shell plugin updates before they land."""
+
+__version__ = "0.3.0"

@@ -12,7 +12,8 @@ that passed.
 ## Requirements
 
 - Omarchy with the `omarchy` command
-- `git`, `jq`, `bash`
+- `python3` 3.14 or newer (Omarchy's system Python) and `git`; the gate uses the
+  standard library only, so there is nothing to `pip install`
 - [OpenCode](https://opencode.ai) on `PATH` (the reviewer runs headlessly)
 
 ## Install
@@ -218,13 +219,36 @@ omarchy-plugin-gate doctor --fix # tripwires
 `check` bootstraps the first review from the whole tree when no
 `gate-approved` exists yet.
 
+## Development
+
+The gate is Python in `src/omarchy_plugin_gate/`, started by the launcher
+`bin/omarchy-plugin-gate`. Development tools come from mise and uv:
+
+```sh
+mise install      # uv
+mise run sync     # pytest, ruff and ty, pinned in uv.lock, into .venv
+mise run lint     # ruff format --check, ruff check, ty check, bash -n
+mise run fmt      # ruff format and safe fixes
+mise run test     # unit tests and the fixture suite
+```
+
 ## Tests
 
 ```sh
-mise run test     # or: tests/run
+mise run test     # both suites
+mise run test:unit
+mise run test:fixture   # or: tests/run
 ```
 
-The suite builds throwaway repositories in a temporary directory, uses a stub
+The unit tests (pytest) cover the pure pieces in isolation: path, danger and
+hint patterns; NUL-separated git parsing with awkward file names; every way a
+reviewer answer can fail to clear a finding or prove it saw the patch; the
+state file formats; and the fail-closed paths (a git error mid-review, a
+reviewer that crashes after `REVIEW PASS`, a reviewer that times out and leaves
+children behind).
+
+The fixture suite (`tests/run`, bash, needs `jq`) is the end-to-end contract.
+It builds throwaway repositories in a temporary directory, uses a stub
 reviewer and stub `omarchy` commands, and covers the bootstrap review, clean and
 partial updates, every hard structural failure (asserting the model is *not*
 called), every kind of structural finding reaching the reviewer, each way a

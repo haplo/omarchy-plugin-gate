@@ -12,7 +12,7 @@
 set -uo pipefail
 
 REPO=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
-GATE=$REPO/bin/omarchy-plugin-gate
+GATE=${GATE:-$REPO/bin/omarchy-plugin-gate}
 KEEP=0
 [[ ${1:-} == --keep ]] && KEEP=1
 

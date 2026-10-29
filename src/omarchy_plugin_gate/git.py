@@ -1,0 +1,206 @@
+"""git, through plumbing where it exists and NUL-separated output where it does not."""
+
+import os
+from dataclasses import dataclass
+from functools import cached_property
+from pathlib import Path
+
+from . import proc
+
+# Options for every diff the gate reads. The user's config must not change what
+# the reviewer sees: no colour, no external diff or textconv, fixed prefixes,
+# deterministic rename detection.
+_DIFF_OPTS = (
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+    "-M",
+)
+
+DOC_EXCLUDES = (".", ":(exclude)*.md", ":(exclude)*.txt", ":(exclude)LICENSE")
+
+
+@dataclass(frozen=True, slots=True)
+class Change:
+    """One file in a diff. `path` is the destination for renames and copies."""
+
+    status: str
+    path: str
+    old_path: str | None
+    old_mode: str
+    new_mode: str
+    new_blob: str
+    binary: bool
+
+    @property
+    def became_executable(self) -> bool:
+        return self.new_mode == "100755" and self.old_mode != "100755"
+
+
+def parse_raw_z(data: bytes) -> list[tuple[str, str, str, str, str, str | None]]:
+    """`git diff --raw -z --no-abbrev` → (status, path, old_mode, new_mode, new_blob, old_path)."""
+    out: list[tuple[str, str, str, str, str, str | None]] = []
+    tokens = data.split(b"\0")
+    i = 0
+    while i < len(tokens):
+        meta = tokens[i]
+        i += 1
+        if not meta:
+            continue
+        if not meta.startswith(b":"):
+            raise ValueError(f"unexpected raw diff record: {meta[:80]!r}")
+        old_mode, new_mode, _old_blob, new_blob, status = meta[1:].decode("ascii").split(" ")
+        if status[:1] in ("R", "C"):
+            old_path, path = os.fsdecode(tokens[i]), os.fsdecode(tokens[i + 1])
+            i += 2
+        else:
+            old_path, path = None, os.fsdecode(tokens[i])
+            i += 1
+        out.append((status[:1], path, old_mode, new_mode, new_blob, old_path))
+    return out
+
+
+def parse_numstat_z(data: bytes) -> dict[str, bool]:
+    """`git diff --numstat -z` → {destination path: is binary}."""
+    out: dict[str, bool] = {}
+    tokens = data.split(b"\0")
+    i = 0
+    while i < len(tokens):
+        record = tokens[i]
+        i += 1
+        if not record:
+            continue
+        added, _deleted, path = record.split(b"\t", 2)
+        if not path:
+            path = tokens[i + 1]
+            i += 2
+        out[os.fsdecode(path)] = added == b"-"
+    return out
+
+
+class Repo:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def git(
+        self,
+        *args: str,
+        check: bool = True,
+        input: bytes | None = None,
+        no_attributes: bool = False,
+    ) -> proc.Result:
+        # Attributes would let the plugin's own .gitattributes mark code as
+        # binary (hiding it from the patch) or rewrite archive contents.
+        env = {"GIT_ATTR_SOURCE": self.empty_tree} if no_attributes else None
+        return proc.run(["git", "-C", str(self.path), *args], check=check, input=input, env=env)
+
+    def ok(self, *args: str) -> bool:
+        return self.git(*args, check=False).ok
+
+    def rev(self, ref: str) -> str | None:
+        r = self.git("rev-parse", "--verify", "--quiet", "--end-of-options", ref, check=False)
+        return r.text if r.ok and r.text else None
+
+    def commit(self, ref: str) -> str | None:
+        return self.rev(f"{ref}^{{commit}}")
+
+    def head(self) -> str | None:
+        return self.rev("HEAD")
+
+    def is_repo(self) -> bool:
+        return self.path.is_dir() and self.ok("rev-parse", "--git-dir")
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        return self.ok("merge-base", "--is-ancestor", ancestor, descendant)
+
+    @cached_property
+    def empty_tree(self) -> str:
+        return proc.run(
+            ["git", "-C", str(self.path), "hash-object", "-t", "tree", "--stdin"], input=b""
+        ).text
+
+    def current_branch(self) -> str | None:
+        r = self.git("symbolic-ref", "--quiet", "--short", "HEAD", check=False)
+        return r.text if r.ok and r.text else None
+
+    def default_branch(self) -> str | None:
+        r = self.git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD", check=False)
+        if r.ok and r.text:
+            return r.text.removeprefix("origin/")
+        r = self.git("ls-remote", "--symref", "origin", "HEAD", check=False)
+        if r.ok:
+            for line in r.text.splitlines():
+                if line.startswith("ref:"):
+                    ref = line.split()[1]
+                    return ref.removeprefix("refs/heads/")
+        for name in ("main", "master"):
+            if self.rev(f"refs/remotes/origin/{name}"):
+                return name
+        return None
+
+    def upstream(self, branch: str) -> str | None:
+        return self.rev(f"refs/remotes/origin/{branch}")
+
+    def is_clean(self) -> bool:
+        return self.ok("diff-index", "--quiet", "HEAD", "--")
+
+    def update_ref(self, ref: str, sha: str) -> None:
+        self.git("update-ref", ref, sha)
+
+    def remote_url(self, name: str = "origin") -> str:
+        r = self.git("remote", "get-url", name, check=False)
+        return r.text if r.ok else ""
+
+    def git_path(self, name: str) -> Path | None:
+        r = self.git("rev-parse", "--git-path", name, check=False)
+        if not r.ok or not r.text:
+            return None
+        p = Path(r.text)
+        return p if p.is_absolute() else self.path / p
+
+    def diff(self, base: str, new: str, *pathspec: str) -> bytes:
+        args = ["diff", *_DIFF_OPTS, base, new]
+        if pathspec:
+            args += ["--", *pathspec]
+        return self.git(*args, no_attributes=True).stdout
+
+    def diff_stat(self, base: str, new: str) -> str:
+        return self.git("diff", *_DIFF_OPTS, "--stat", base, new, no_attributes=True).text
+
+    def changes(self, base: str, new: str) -> list[Change]:
+        raw = self.git(
+            "diff", *_DIFF_OPTS, "--raw", "-z", "--no-abbrev", base, new, no_attributes=True
+        ).stdout
+        numstat = self.git(
+            "diff", *_DIFF_OPTS, "--numstat", "-z", base, new, no_attributes=True
+        ).stdout
+        binary = parse_numstat_z(numstat)
+        return [
+            Change(status, path, old_path, old_mode, new_mode, new_blob, binary.get(path, False))
+            for status, path, old_mode, new_mode, new_blob, old_path in parse_raw_z(raw)
+        ]
+
+    def blob(self, spec: str) -> bytes | None:
+        """Contents of `<sha>` or `<rev>:<path>`, or None when it does not exist."""
+        r = self.git("cat-file", "blob", spec, check=False)
+        return r.stdout if r.ok else None
+
+    def exists(self, spec: str) -> bool:
+        return self.ok("cat-file", "-e", spec)
+
+    def archive(self, rev: str) -> bytes:
+        return self.git("archive", "--format=tar", rev, no_attributes=True).stdout
+
+    def subject(self, rev: str) -> str:
+        r = self.git("log", "-1", "--format=%s", rev, check=False)
+        return r.text if r.ok else ""
+
+    def log_lines(self, old: str, new: str, fmt: str) -> list[str]:
+        r = self.git("log", f"--format={fmt}", f"{old}..{new}", check=False)
+        return r.text.splitlines() if r.ok and r.text else []
+
+    def hash_object(self, data: bytes) -> str:
+        r = self.git("hash-object", "--no-filters", "--stdin", input=data, check=False)
+        return r.text if r.ok else ""

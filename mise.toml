@@ -1,4 +1,14 @@
 # omarchy-plugin-gate — tasks
+#
+# The gate itself needs only the system python3 and git. uv is for development:
+# it installs the locked test, lint and type-check tools into .venv.
+
+[tools]
+uv = "0.13"
+
+[env]
+# Develop and test on the Python the gate actually runs on: Omarchy's.
+UV_PYTHON_PREFERENCE = "only-system"
 
 # Install / update the command, reviewer agent and nightly timer.
 [tasks.install]
@@ -35,10 +45,34 @@ description = "Verify the wiring; pass --fix to install missing hooks"
 run = "bin/omarchy-plugin-gate doctor"
 
 # Development.
-[tasks.test]
-description = "Run the fixture suite (no network, no real install)"
+[tasks.sync]
+description = "Install the locked development tools (pytest, ruff, ty) into .venv"
+run = "uv sync --locked"
+
+[tasks."test:unit"]
+description = "Unit tests"
+run = "uv run --locked pytest"
+
+[tasks."test:fixture"]
+description = "Fixture suite (no network, no real install)"
 run = "tests/run"
 
+[tasks.test]
+description = "Run every test"
+depends = ["test:unit", "test:fixture"]
+
+[tasks.fmt]
+description = "Format the code and apply safe lint fixes"
+run = [
+  "uv run --locked ruff format src tests/unit bin/omarchy-plugin-gate",
+  "uv run --locked ruff check --fix src tests/unit bin/omarchy-plugin-gate",
+]
+
 [tasks.lint]
-description = "Syntax-check every shell file"
-run = "bash -n bin/omarchy-plugin-gate scripts/install.sh scripts/uninstall.sh tests/run"
+description = "Format check, lint, type check, shell syntax"
+run = [
+  "uv run --locked ruff format --check src tests/unit bin/omarchy-plugin-gate",
+  "uv run --locked ruff check src tests/unit bin/omarchy-plugin-gate",
+  "uv run --locked ty check",
+  "bash -n scripts/install.sh scripts/uninstall.sh tests/run",
+]
