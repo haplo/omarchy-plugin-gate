@@ -26,8 +26,11 @@ mise run install
 ```
 
 `mise run install` symlinks the command to `~/.local/bin`, renders the reviewer
-agent into `~/.config/opencode/agents/`, installs the systemd user units and
-enables the nightly check. Use `mise run install:no-timer` to skip the timer.
+agent into `~/.config/opencode/agents/`, copies
+[`config.example.toml`](config.example.toml) to
+`~/.config/omarchy-plugin-gate/config.toml` if there is no config file yet,
+installs the systemd user units and enables the nightly check. Use
+`mise run install:no-timer` to skip the timer.
 
 Without mise, `scripts/install.sh` does the same thing.
 
@@ -192,25 +195,42 @@ the time a hook finishes. The gate is what prevents bad code from arriving.
 
 ## Settings
 
-Every setting can be given as an option or an environment variable. Options go
-before or after the command and win over the environment; an option given on
-both sides of the command takes the value after it. An empty variable counts as
-unset.
+Every setting can be given as an option, an environment variable, or a key in
+the config file. Options win over the environment, which wins over the config
+file. Options go before or after the command; an option given on both sides of
+the command takes the value after it. An empty variable or config value counts
+as unset.
 
 ```sh
 omarchy-plugin-gate --model venice/claude-opus-4-7 check
 omarchy-plugin-gate check -p omasync --timeout 900
 ```
 
-| Option | Variable | Default | Purpose |
-|---|---|---|---|
-| `--root DIR` | `OMARCHY_PLUGIN_GATE_ROOT` | `~/Work/omarchy-plugins` | where working clones live |
-| `--state DIR` | `OMARCHY_PLUGIN_GATE_STATE` | `~/.local/state/omarchy-plugin-gate` | evidence and markers |
-| `--agent NAME` | `OMARCHY_PLUGIN_GATE_AGENT` | `plugin-reviewer` | OpenCode agent that reviews, read from `~/.config/opencode/agents/<name>.md` |
-| `--model ID` | `OMARCHY_PLUGIN_GATE_MODEL` | OpenCode's default | model for the reviewer, e.g. `venice/claude-opus-4-7` |
-| `--notify POLICY` | `OMARCHY_PLUGIN_GATE_NOTIFY` | `all` | `all`, `ready`, or `none` |
-| `--timeout SECONDS` | `OMARCHY_PLUGIN_GATE_TIMEOUT` | `420` | reviewer timeout, seconds |
-| `--max-patch BYTES` | `OMARCHY_PLUGIN_GATE_MAX_PATCH` | `2097152` | largest diff that is auto-reviewed; assumes a 1M-token model, so lower it for smaller ones (about 3 bytes per token, minus headroom) |
+The config file is `$XDG_CONFIG_HOME/omarchy-plugin-gate/config.toml`
+(`~/.config/omarchy-plugin-gate/config.toml` when `XDG_CONFIG_HOME` is unset or
+not an absolute path), in TOML:
+
+```toml
+model = "venice/claude-opus-4-7"
+timeout = 900
+```
+
+A missing file is fine. Unknown keys, wrong types and invalid TOML are errors.
+`timeout` and `max-patch` are TOML integers, everything else is a string, and
+`root` and `state` must be absolute paths or start with `~/`. Install copies
+[`config.example.toml`](config.example.toml) there, with every setting commented
+out at its default, and never overwrites an existing file. The nightly check
+reads the same file.
+
+| Option | Variable | Config key | Default | Purpose |
+|---|---|---|---|---|
+| `--root DIR` | `OMARCHY_PLUGIN_GATE_ROOT` | `root` | `~/Work/omarchy-plugins` | where working clones live |
+| `--state DIR` | `OMARCHY_PLUGIN_GATE_STATE` | `state` | `~/.local/state/omarchy-plugin-gate` | evidence and markers |
+| `--agent NAME` | `OMARCHY_PLUGIN_GATE_AGENT` | `agent` | `plugin-reviewer` | OpenCode agent that reviews, read from `~/.config/opencode/agents/<name>.md` |
+| `--model ID` | `OMARCHY_PLUGIN_GATE_MODEL` | `model` | OpenCode's default | model for the reviewer, e.g. `venice/claude-opus-4-7` |
+| `--notify POLICY` | `OMARCHY_PLUGIN_GATE_NOTIFY` | `notify` | `all` | `all`, `ready`, or `none` |
+| `--timeout SECONDS` | `OMARCHY_PLUGIN_GATE_TIMEOUT` | `timeout` | `420` | reviewer timeout, seconds |
+| `--max-patch BYTES` | `OMARCHY_PLUGIN_GATE_MAX_PATCH` | `max-patch` | `2097152` | largest diff that is auto-reviewed; assumes a 1M-token model, so lower it for smaller ones (about 3 bytes per token, minus headroom) |
 
 Tripwire hooks record the root and state of the run that installed them, so a
 merge reviewed by the hook uses the same clones and evidence directory whatever
@@ -271,7 +291,8 @@ partial updates, every hard structural failure (asserting the model is *not*
 called), every kind of structural finding reaching the reviewer, each way a
 reviewer can fail to clear a finding, a missing, wrong or planted code word,
 reviewer failure and crash, the reviewer's working directory, options winning
-over the environment, `doctor`
+over the environment and the environment over the config file, install copying
+the example config without overwriting one, `doctor`
 spotting a stale reviewer agent, update applying and refusing, the tripwire
 rolling back a rejected pull while leaving local commits alone, notification
 policy, one-time approvals (including dry run, `--sha`, `--show`, and the
@@ -283,8 +304,8 @@ resulting update), and both `add` outcomes. No network, no real plugin install.
 mise run uninstall
 ```
 
-Removes the command, reviewer agent, units and the tripwires. Working clones,
-review evidence and installed plugins are kept; the output explains how to point
+Removes the command, reviewer agent, units and the tripwires. The config file,
+working clones, review evidence and installed plugins are kept; the output explains how to point
 the installed copies back at their upstream repositories.
 
 ## Limits, honestly

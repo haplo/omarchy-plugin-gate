@@ -9,7 +9,8 @@
 #   omarchy-plugin-gate doctor [-p NAME] [--fix]
 #
 # Setting options (--root, --state, --agent, --model, --notify, --timeout,
-# --max-patch) go before or after the command and beat the environment.
+# --max-patch) go before or after the command and beat the environment, which
+# beats ~/.config/omarchy-plugin-gate/config.toml.
 #
 # A launcher for the code in ../src, run by the system Python with the standard
 # library only. -I keeps PYTHONPATH, user site-packages and the working

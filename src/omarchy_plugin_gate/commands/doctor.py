@@ -90,6 +90,10 @@ def run(ctx: Context, want: str, fix: bool) -> int:
         warn(f"gate root does not exist: {cfg.root}")
         return 1
     failures = 0
+    if cfg.config_file.is_file():
+        ok(f"config: {cfg.config_file}")
+    else:
+        info(f"no config file at {cfg.config_file} (defaults apply)")
     opencode = proc.which("opencode")
     if opencode is None:
         bad("opencode is not on PATH; the reviewer cannot run")
@@ -101,10 +105,10 @@ def run(ctx: Context, want: str, fix: bool) -> int:
         if cfg.model in models:
             ok(f"reviewer model: {cfg.model}")
         else:
-            bad(f"OMARCHY_PLUGIN_GATE_MODEL={cfg.model} is not a model opencode knows")
+            bad(f"reviewer model {cfg.model} is not a model opencode knows")
             failures += 1
     else:
-        info("reviewer model: opencode default (set OMARCHY_PLUGIN_GATE_MODEL to pin one)")
+        info("reviewer model: opencode default (set model in the config file to pin one)")
 
     agent, src = cfg.agent_file, cfg.agent_src
     if not agent.is_file():

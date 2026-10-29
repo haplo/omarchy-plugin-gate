@@ -119,6 +119,30 @@ def test_options_beat_the_environment(
     assert (cfg.model, cfg.review_timeout) == ("flag/model", 5)
 
 
+def test_config_file_is_read_last(
+    seen_config: list[Config], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "omarchy-plugin-gate" / "config.toml"
+    config.parent.mkdir()
+    config.write_text('model = "file/model"\ntimeout = 9\nnotify = "ready"\n')
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setenv("OMARCHY_PLUGIN_GATE_TIMEOUT", "8")
+    assert cli.main(LAUNCHER, ["check", "--notify", "none"]) == 1
+    [cfg] = seen_config
+    assert (cfg.model, cfg.review_timeout, cfg.notify_policy) == ("file/model", 8, "none")
+
+
+def test_bad_config_file_is_reported(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    config = tmp_path / "omarchy-plugin-gate" / "config.toml"
+    config.parent.mkdir()
+    config.write_text("modle = 'typo'\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert cli.main(LAUNCHER, ["status"]) == 1
+    assert f"unknown setting 'modle' in {config}" in capsys.readouterr().err
+
+
 def test_option_after_the_command_wins(seen_config: list[Config]) -> None:
     assert cli.main(LAUNCHER, ["--model", "first", "doctor", "--model", "second"]) == 1
     assert seen_config[0].model == "second"

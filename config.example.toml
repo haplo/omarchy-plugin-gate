@@ -1,0 +1,32 @@
+# omarchy-plugin-gate configuration
+#
+# Read from $XDG_CONFIG_HOME/omarchy-plugin-gate/config.toml
+# (~/.config/omarchy-plugin-gate/config.toml when XDG_CONFIG_HOME is unset).
+# Every value below is the default. Uncomment a line to change it.
+#
+# This file has the lowest priority: an option such as --model wins over the
+# variable OMARCHY_PLUGIN_GATE_MODEL, which wins over `model` here. An empty
+# string counts as unset. Paths must be absolute or start with ~/.
+
+# Where the working clones live.
+# root = "~/Work/omarchy-plugins"
+
+# Evidence and markers. The default follows $XDG_STATE_HOME when it is set.
+# state = "~/.local/state/omarchy-plugin-gate"
+
+# OpenCode agent that reviews, read from ~/.config/opencode/agents/<name>.md.
+# agent = "plugin-reviewer"
+
+# Model for the reviewer, e.g. "venice/claude-opus-4-7". Empty uses OpenCode's
+# default model.
+# model = ""
+
+# When to notify: "all", "ready" or "none".
+# notify = "all"
+
+# Reviewer timeout, in seconds.
+# timeout = 420
+
+# Largest diff that is auto-reviewed, in bytes. Assumes a 1M-token reviewer
+# model; lower it for smaller ones (about 3 bytes per token, minus headroom).
+# max-patch = 2097152

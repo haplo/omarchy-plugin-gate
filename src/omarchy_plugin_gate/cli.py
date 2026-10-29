@@ -53,6 +53,11 @@ Options, before or after the command. Each overrides its environment variable:
   --notify POLICY    OMARCHY_PLUGIN_GATE_NOTIFY     all|ready|none (default all)
   --timeout SECONDS  OMARCHY_PLUGIN_GATE_TIMEOUT    reviewer timeout (default 420)
   --max-patch BYTES  OMARCHY_PLUGIN_GATE_MAX_PATCH  patch size limit (default 2097152)
+
+Config file, lowest priority: $XDG_CONFIG_HOME/omarchy-plugin-gate/config.toml
+(default ~/.config/omarchy-plugin-gate/config.toml). Its keys are the option
+names without the dashes in front: root, state, agent, model, notify, timeout,
+max-patch.
 """
 
 

@@ -23,6 +23,14 @@ def isolated_git(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.M
         monkeypatch.delenv(var, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def isolated_config(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Never read the developer's own config file."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path_factory.mktemp("xdg-config")))
+
+
 @pytest.fixture
 def upstream(tmp_path: Path) -> Upstream:
     u = Upstream(tmp_path / "upstream")

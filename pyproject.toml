@@ -47,7 +47,7 @@ python-version = "3.14"
 root = ["src", "tests/unit"]
 
 [tool.ty.src]
-include = ["src", "tests/unit"]
+include = ["src", "tests/unit", "scripts/paths.py"]
 
 [tool.ty.terminal]
 error-on-warning = true

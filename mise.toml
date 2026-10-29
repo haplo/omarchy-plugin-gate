@@ -64,15 +64,15 @@ depends = ["test:unit", "test:fixture"]
 [tasks.fmt]
 description = "Format the code and apply safe lint fixes"
 run = [
-  "uv run --locked ruff format src tests/unit bin/omarchy-plugin-gate",
-  "uv run --locked ruff check --fix src tests/unit bin/omarchy-plugin-gate",
+  "uv run --locked ruff format src tests/unit bin/omarchy-plugin-gate scripts/paths.py",
+  "uv run --locked ruff check --fix src tests/unit bin/omarchy-plugin-gate scripts/paths.py",
 ]
 
 [tasks.lint]
 description = "Format check, lint, type check, shell syntax"
 run = [
-  "uv run --locked ruff format --check src tests/unit bin/omarchy-plugin-gate",
-  "uv run --locked ruff check src tests/unit bin/omarchy-plugin-gate",
+  "uv run --locked ruff format --check src tests/unit bin/omarchy-plugin-gate scripts/paths.py",
+  "uv run --locked ruff check src tests/unit bin/omarchy-plugin-gate scripts/paths.py",
   "uv run --locked ty check",
   "bash -n scripts/install.sh scripts/uninstall.sh tests/run",
 ]

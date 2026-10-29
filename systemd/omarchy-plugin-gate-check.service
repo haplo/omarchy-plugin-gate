@@ -7,7 +7,8 @@ Type=oneshot
 # Same reviewer binary the interactive shell uses; mise's command wrapper
 # resolves the configured opencode version, so this survives upgrades.
 Environment=PATH=%h/.local/share/mise/command-wrappers/bin:%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-# Pin a stronger reviewer model for the unattended runs, e.g.:
+# Settings come from ~/.config/omarchy-plugin-gate/config.toml. To pin a
+# reviewer model for the unattended runs only, override it here, e.g.:
 # Environment=OMARCHY_PLUGIN_GATE_MODEL=venice/deepseek-v4-1-flash-1017
 ExecStart=%h/.local/bin/omarchy-plugin-gate check
 Nice=10

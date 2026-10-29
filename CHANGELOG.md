@@ -13,6 +13,16 @@ All notable changes to omarchy-plugin-gate. The format follows
   command, win over the matching `OMARCHY_PLUGIN_GATE_*` variable, and take
   the value after the command when given on both sides. An empty value is an
   error. `OMARCHY_PLUGIN_GATE_AGENT` is now documented.
+- A TOML config file, `$XDG_CONFIG_HOME/omarchy-plugin-gate/config.toml`
+  (`~/.config/omarchy-plugin-gate/config.toml` by default), with the lowest
+  priority: options win over variables, which win over the file. Its keys are
+  the option names (`root`, `state`, `agent`, `model`, `notify`, `timeout`,
+  `max-patch`). Unknown keys, wrong types and invalid TOML are errors; `root`
+  and `state` may start with `~/`. The repository ships `config.example.toml`
+  with every setting commented out at its default, and `install.sh` copies it
+  into place when there is no config file yet; it never overwrites one, and
+  `uninstall.sh` keeps it. Both scripts take the root and state from the config
+  file as well. `doctor` reports whether the file exists.
 
 ### Changed
 
@@ -48,8 +58,14 @@ All notable changes to omarchy-plugin-gate. The format follows
   the environment of the `git pull`. Hooks written by 0.2.0, or with a
   different root or state, are out of date: `check`, `approve` and `update`
   rewrite them, and `doctor` reports them until `doctor --fix` does.
-- Invalid setting messages name the option or variable that supplied the value,
-  for example `--timeout must be a positive whole number of seconds`.
+- Invalid setting messages name the option, variable or config key that
+  supplied the value, for example `--timeout must be a positive whole number of
+  seconds`.
+- A relative `XDG_CONFIG_HOME` or `XDG_STATE_HOME` is ignored, as the XDG Base
+  Directory specification requires, and the default under `~` is used instead.
+- The reviewer model is best pinned in the config file, which the nightly check
+  reads too; the service's commented `Environment=` line now only overrides it
+  for unattended runs.
 
 ### Fixed
 

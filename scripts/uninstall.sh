@@ -1,12 +1,24 @@
 #!/usr/bin/env bash
-# Remove what install.sh added. State, evidence and working clones are kept.
+# Remove what install.sh added. Config, state, evidence and working clones are
+# kept.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 
 BIN_DIR=${OMARCHY_PLUGIN_GATE_BIN_DIR:-$HOME/.local/bin}
-CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
-ROOT=${OMARCHY_PLUGIN_GATE_ROOT:-$HOME/Work/omarchy-plugins}
+CONFIG_HOME=${XDG_CONFIG_HOME:-}
+[[ $CONFIG_HOME == /* ]] || CONFIG_HOME=$HOME/.config
+CONFIG_FILE=$CONFIG_HOME/omarchy-plugin-gate/config.toml
+# The root and state may be set in the config file, so ask the gate. If it
+# cannot say (a broken config, say), fall back to the environment.
+if paths=$(python3 -I "$REPO/scripts/paths.py"); then
+  ROOT=$(sed -n 1p <<<"$paths")
+  STATE_DIR=$(sed -n 2p <<<"$paths")
+else
+  echo "uninstall: using the environment and default paths instead" >&2
+  ROOT=${OMARCHY_PLUGIN_GATE_ROOT:-$HOME/Work/omarchy-plugins}
+  STATE_DIR=${OMARCHY_PLUGIN_GATE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-plugin-gate}
+fi
 UNIT_DIR=$CONFIG_HOME/systemd/user
 AGENT_FILE=$CONFIG_HOME/opencode/agents/plugin-reviewer.md
 
@@ -54,8 +66,9 @@ cat <<EOF
 Removed the command, reviewer agent and timer.
 
 Kept on purpose:
+  config           $CONFIG_FILE
   working clones   $ROOT
-  review evidence  ${OMARCHY_PLUGIN_GATE_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-plugin-gate}
+  review evidence  $STATE_DIR
   installed plugins (they still track the clones above; point their origin back
   at the upstream repository with 'git remote set-url' if you want plain
   'omarchy plugin update' to follow GitHub again)

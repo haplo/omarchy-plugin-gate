@@ -1,6 +1,7 @@
-"""Settings, read once from the command line and the environment."""
+"""Settings, read once from the command line, the environment and the config file."""
 
 import getpass
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from pathlib import Path
@@ -20,13 +21,15 @@ DEFAULT_TIMEOUT = 420
 # room for its prompt, findings and answer. Lower it for smaller models.
 DEFAULT_MAX_PATCH = 2 * 1024 * 1024
 
+CONFIG_NAME = Path("omarchy-plugin-gate") / "config.toml"
+
 
 @dataclass(frozen=True, slots=True)
 class Overrides:
     """Settings given on the command line; None means the flag was not given.
 
-    Each field is the flag `--<name>` (underscores become dashes) and overrides
-    the variable `OMARCHY_PLUGIN_GATE_<NAME>`.
+    Each field is the flag `--<name>` (underscores become dashes), the variable
+    `OMARCHY_PLUGIN_GATE_<NAME>` and the config file key `<name>`.
     """
 
     root: str | None = None
@@ -39,23 +42,100 @@ class Overrides:
 
 
 def option_flag(field: str) -> str:
-    return "--" + field.replace("_", "-")
+    return "--" + config_key(field)
 
 
 def env_var(field: str) -> str:
     return "OMARCHY_PLUGIN_GATE_" + field.upper()
 
 
+def config_key(field: str) -> str:
+    return field.replace("_", "-")
+
+
 SETTING_FIELDS = tuple(f.name for f in fields(Overrides))
+_INT_FIELDS = frozenset({"timeout", "max_patch"})
+_PATH_FIELDS = frozenset({"root", "state"})
 
 
-def _setting(overrides: Overrides, env: Mapping[str, str], field: str) -> tuple[str, str]:
+@dataclass(frozen=True, slots=True)
+class ConfigFile:
+    """Settings from the config file, as strings keyed by field name."""
+
+    path: Path
+    values: Mapping[str, str]
+
+    def source(self, field: str) -> str:
+        return f"{config_key(field)} in {self.path}"
+
+
+def _file_value(key: str, value: object, home: Path, path: Path) -> str:
+    field = key.replace("-", "_")
+    if field in _INT_FIELDS:
+        # bool is an int to Python, but `timeout = true` is not a number.
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise GateError(f"{key} in {path} must be a whole number")
+        return str(value)
+    if not isinstance(value, str):
+        raise GateError(f"{key} in {path} must be a string")
+    if field in _PATH_FIELDS and value:
+        if value == "~" or value.startswith("~/"):
+            value = str(home / value[2:])
+        if not Path(value).is_absolute():
+            raise GateError(f"{key} in {path} must be an absolute path or start with ~/")
+    return value
+
+
+def parse_config(text: str, path: Path, home: Path) -> ConfigFile:
+    """Parse config file text. Unknown keys and wrong types are errors; an empty
+    string counts as unset, like an empty variable."""
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise GateError(f"{path} is not valid TOML: {e}") from None
+    known = {config_key(f) for f in SETTING_FIELDS}
+    values: dict[str, str] = {}
+    for key, value in data.items():
+        if key not in known:
+            raise GateError(f"unknown setting '{key}' in {path}")
+        if text_value := _file_value(key, value, home, path):
+            values[key.replace("-", "_")] = text_value
+    return ConfigFile(path, values)
+
+
+def load_config(path: Path, home: Path) -> ConfigFile:
+    """The config file at path; a missing file is an empty one."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return ConfigFile(path, {})
+    except UnicodeDecodeError:
+        raise GateError(f"{path} is not valid UTF-8") from None
+    except OSError as e:
+        raise GateError(f"cannot read {path}: {e.strerror or e}") from None
+    return parse_config(text, path, home)
+
+
+def _xdg_dir(env: Mapping[str, str], var: str, default: Path) -> Path:
+    """An XDG base directory. The spec says relative values are invalid and
+    should be ignored, so they fall back to the default like an unset one."""
+    value = env.get(var, "")
+    return Path(value) if value.startswith("/") else default
+
+
+def _setting(
+    overrides: Overrides, env: Mapping[str, str], file: ConfigFile, field: str
+) -> tuple[str, str]:
     """The value of one setting and where it came from: the flag beats the
-    environment, and an empty variable counts as unset."""
+    environment, which beats the config file. Empty counts as unset."""
     value = getattr(overrides, field)
     if value is not None:
         return value, option_flag(field)
-    return env.get(env_var(field), ""), env_var(field)
+    if value := env.get(env_var(field), ""):
+        return value, env_var(field)
+    if value := file.values.get(field, ""):
+        return value, file.source(field)
+    return "", env_var(field)
 
 
 def _positive_int(raw: str, source: str, default: int, what: str) -> int:
@@ -93,6 +173,10 @@ class Config:
     user: str
 
     @property
+    def config_file(self) -> Path:
+        return self.config_home / CONFIG_NAME
+
+    @property
     def installed_root(self) -> Path:
         return self.config_home / "omarchy" / "plugins"
 
@@ -110,20 +194,21 @@ class Config:
     ) -> Config:
         over = overrides or Overrides()
         home = Path(env.get("HOME") or Path.home())
-        state_home = Path(env.get("XDG_STATE_HOME") or home / ".local" / "state")
-        config_home = Path(env.get("XDG_CONFIG_HOME") or home / ".config")
-        root, _ = _setting(over, env, "root")
-        state, _ = _setting(over, env, "state")
-        agent, _ = _setting(over, env, "agent")
-        model, _ = _setting(over, env, "model")
-        notify, notify_source = _setting(over, env, "notify")
+        state_home = _xdg_dir(env, "XDG_STATE_HOME", home / ".local" / "state")
+        config_home = _xdg_dir(env, "XDG_CONFIG_HOME", home / ".config")
+        file = load_config(config_home / CONFIG_NAME, home)
+        root, _ = _setting(over, env, file, "root")
+        state, _ = _setting(over, env, file, "state")
+        agent, _ = _setting(over, env, file, "agent")
+        model, _ = _setting(over, env, file, "model")
+        notify, notify_source = _setting(over, env, file, "notify")
         notify = notify or "all"
         if notify not in NOTIFY_POLICIES:
             raise GateError(
                 f"{notify_source} must be one of {', '.join(NOTIFY_POLICIES)}, not '{notify}'"
             )
-        timeout, timeout_source = _setting(over, env, "timeout")
-        max_patch, max_patch_source = _setting(over, env, "max_patch")
+        timeout, timeout_source = _setting(over, env, file, "timeout")
+        max_patch, max_patch_source = _setting(over, env, file, "max_patch")
         return cls(
             root=Path(root) if root else home / "Work" / "omarchy-plugins",
             state_root=Path(state) if state else state_home / "omarchy-plugin-gate",
