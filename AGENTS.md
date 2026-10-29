@@ -1,0 +1,176 @@
+# AGENTS.md
+
+Review-before-update gate for Omarchy shell plugins. The core invariant: an
+installed plugin may only move to a commit that passed structural checks and a
+read-only model review. Everything here is the machinery for that promise.
+
+Read `README.md` for the user-facing model (paths, state layout, settings). This
+file is for changing the code.
+
+## Layout
+
+- `bin/omarchy-plugin-gate` — launcher run by the system `python3 -I`. It puts
+  `src/` on the import path and calls `cli.main`. Hooks and the systemd unit
+  call this exact file, so its path is part of the installed wiring.
+- `src/omarchy_plugin_gate/` — the CLI. Start at `cli.py` (subcommands `add`,
+  `check`, `approve`, `update`, `status`, `doctor`, and the hidden `_post-merge`
+  hook entry point), then:
+  - `config.py` — every setting, read once from the options, the environment
+    and the TOML config file (`$XDG_CONFIG_HOME/omarchy-plugin-gate/config.toml`),
+    in that order of priority.
+  - `proc.py` — the only module that starts processes.
+  - `git.py` — `Repo` wrapper; diffs and NUL-separated change records.
+  - `mechanics.py`, `patterns.py` — structural checks (hard failures, findings,
+    hints) as pure functions, plus one `check()` against git.
+  - `reviewer.py` — prompt, opencode run, and `decide()`, which turns the
+    reviewer's output into a verdict.
+  - `review.py` — one candidate end to end; the fail-closed boundary.
+  - `state.py` — markers, waivers, held, evidence directories, log.
+  - `hooks.py`, `notify.py`, `plugins.py`, `context.py`, `commands/*.py`.
+- `agents/plugin-reviewer.md.in` — reviewer agent, installed verbatim. The
+  agent is deny-all except `read`/`glob`/`grep`; its scope comes from the
+  directory the gate runs it in plus the `external_directory` deny. In OpenCode
+  V2, `glob` and `grep` rules match the pattern, not the search path, and
+  `read` rules match a path relative to the working directory, so do not write
+  absolute path rules for them. `doctor` flags an installed copy that differs.
+- `scripts/install.sh`, `scripts/uninstall.sh` — symlink the command, render the
+  agent, copy `config.example.toml` when there is no config file (never
+  overwriting one), install units/timer, and add/remove tripwires. Idempotent;
+  rerun after changing the agent template or state path. They get the root and
+  state from `scripts/paths.py`, which uses `config.py`, so the config file
+  applies to them too.
+- `config.example.toml` — every setting commented out at its default. A unit
+  test uncomments it and checks the result equals the built-in defaults.
+- `systemd/` — nightly `check` service and timer. `%h` paths are rewritten by
+  `install.sh`.
+- `tests/run` — fixture suite (bash, needs `jq`), the end-to-end contract.
+  Builds throwaway upstreams, clones, a stub `opencode`, and stub `omarchy`
+  commands. No network, no real model, no real plugin install.
+  `GATE=<path> tests/run` runs it against another build.
+- `tests/unit/` — pytest unit tests; `support.py` builds scratch git repos.
+- `pyproject.toml`, `uv.lock` — development tools (pytest, ruff, ty) and their
+  config. There is no build backend: the project is never installed.
+- `mise.toml` — the public task interface: `install`, `uninstall`, `check`,
+  `update`, `status`, `doctor`, `sync`, `test`, `lint`, `fmt`. It pins `uv`.
+
+Runtime dependencies: `python3` 3.14+ (standard library only), `git`, and
+`opencode` on `PATH`. No third-party Python packages at runtime; this runs on
+stock Omarchy machines. Development dependencies go in the `dev` group of
+`pyproject.toml` and are locked in `uv.lock`.
+
+## Commands
+
+```sh
+mise run sync          # once: pytest, ruff, ty into .venv
+mise run test          # unit tests + fixture suite
+mise run test:unit     # uv run pytest
+mise run test:fixture  # tests/run; tests/run --keep keeps the fixture
+mise run lint          # ruff format --check, ruff check, ty check, bash -n
+mise run fmt           # ruff format + safe fixes
+```
+
+There is no build step. `mise run install` mutates the developer's actual
+config, timer, and hooks — do not run it to verify a change. Use the fixture
+suite instead.
+
+When a fixture test fails, the fixture is kept automatically and its path is
+printed. Each test resets upstream to the last approved commit via
+`reset_upstream`, so new cases should follow the existing
+`case_hard`/`case_finding`/`case_uncleared` and `commit_upstream` patterns.
+
+Unit tests must never reach a real `opencode` or `omarchy`: put a stub first on
+`PATH` or monkeypatch the call. `/usr/bin/opencode` may exist on the machine.
+
+## Invariants (do not weaken)
+
+- **Fail closed.** No verdict line, reviewer crash/timeout/non-zero exit,
+  malformed manifest, oversized patch, or anything unrecognised means
+  `REVIEW FAIL`. Never turn a missing signal into a pass. `review.review()`
+  catches every exception and records `REVIEW FAIL`; keep review logic inside
+  it, and let `proc.run` raise on unexpected exits instead of swallowing them.
+- **The reviewer proves it saw the whole patch.** `patch.review` is the patch
+  plus a last line with a fresh random code word that never appears in the
+  prompt. A verdict without a matching `SEEN <word>` line is `REVIEW FAIL`
+  (a FAIL keeps its reasons and gains a note). Keep the word random per run and
+  out of the prompt, and keep `seen_code` to cosmetic tolerance only.
+- **Hard structural failures never reach the model.** `mechanics.check` runs
+  first; tests assert the stub reviewer is not invoked for those cases. Only
+  checks the model cannot judge or that protect the gate's own bookkeeping
+  (patch size, UTF-8 encoding, manifest id, validity, entry points, finding
+  count, an unreadable manifest) are hard. A patch that is not valid UTF-8 is never attached as text by
+  OpenCode, so the reviewer would see no code at all.
+- **Every structural finding must be explicitly cleared.** Softer checks become
+  numbered findings in the prompt. A `REVIEW PASS` counts only if each finding
+  has exactly one `Fn CLEARED <reason>` line; missing, duplicate, `CONFIRMED`,
+  reasonless, or unknown answers turn it into `REVIEW FAIL`. Do not loosen the
+  parser in `finding_problems` beyond cosmetic tolerance.
+- **`refs/heads/gate-approved` is authoritative.** `check` advances it only
+  after a pass or a recorded one-time waiver; `update` refuses an approved
+  commit with neither `<state>/<name>/reviewed/<sha>` nor
+  `<state>/<name>/waived/<sha>`. Local work must never be rewritten by the
+  gate.
+- **The installed copy must track the gate clone.** Its `origin` points at
+  `~/Work/omarchy-plugins/<name>`; that is what stops plain
+  `omarchy plugin update` from bypassing review. `doctor` checks this.
+- **Reviewer isolation.** Run the reviewer from the candidate's review
+  directory (`reviews/<short-sha>/`), never the plugin checkout, and pass
+  `patch.review` with `--file`. A hostile `.opencode/` or `AGENTS.md` in the
+  diff must not be loadable. Keep the agent's permissions deny-by-default, with
+  reads, globs and greps confined to its working directory.
+- **Tripwire scope.** The `post-merge` hook reviews only commits reachable from
+  upstream and rolls those back; commits authored locally are left alone. The
+  hook is a net, not the gate — do not move primary enforcement into it.
+- **Evidence is written before decisions are made.** `patch`, `patch.review`,
+  `mech.txt`, `findings.txt`, `hints.txt`, `review.txt`, `verdict`, and (for passes that
+  cleared findings) `cleared` under
+  `<state>/<name>/reviews/<short-sha>/` are the audit trail. Keep them complete
+  and readable after both passes and failures.
+- **Manual approval is explicit and recorded.** `approve` may waive a failed
+  review for one commit, but only after printing the evidence and collecting a
+  reason (possibly empty). Keep the failed verdict, write the waiver under
+  `<state>/<name>/waived/<sha>` with date/user/base/patch hash, and never make
+  the path automatic or plugin-wide.
+
+## Conventions
+
+- Python 3.14, standard library only, fully typed; `ruff` and `ty` must pass.
+  Frozen dataclasses for records, `Path` for paths. Keep checks and parsing as
+  pure functions on plain data and do the git and file work around them, so
+  they can be unit-tested without a repository.
+- Processes start only through `proc.run`, `proc.run_quiet` or
+  `proc.run_supervised`: a fixed argument list, never `shell=True`, and a
+  scrubbed environment (no `GIT_DIR` and friends from hooks). Expected non-zero
+  exits use `check=False`.
+- git goes through `Repo`. Diffs use the fixed `_DIFF_OPTS` and ignore
+  `.gitattributes`; file lists come from `-z` output; prefer plumbing over
+  porcelain. User-supplied revs go through `Repo.rev`/`Repo.commit`, which add
+  `--end-of-options`.
+- Anything from a plugin (paths, manifest values, reviewer text) that lands in
+  a line-oriented file, the log or the prompt goes through `output.printable`
+  or `state.one_line` first, so it cannot forge extra lines.
+- State files are written with `state.write_atomic`. Their formats are shared
+  with earlier releases; do not change them without a migration.
+- User-facing output goes through `output.say`, `info`, `ok`, `bad`, `warn` and
+  `indented`; failures raise `GateError`, which prints
+  `omarchy-plugin-gate: <message>` to stderr and exits 1.
+- Shell (`scripts/`, `tests/run`, the hook text) stays bash with
+  `set -euo pipefail` and two-space indent. `tests/run` intentionally uses
+  `set -uo pipefail` (without `-e`) because it inspects non-zero exits.
+- A new setting is a field on `config.Overrides`, which gives it the option
+  `--<name>`, the variable `OMARCHY_PLUGIN_GATE_<NAME>` and the config file key
+  `<name>` (dashes, like the option); the option wins over the variable, which
+  wins over the file. It gets a default in `Config.from_env`, a commented-out
+  line at that default in `config.example.toml`, a row in the README settings
+  table, and a line in `cli.USAGE`. There are no unprefixed aliases.
+- Unit tests must never read the developer's config file: `conftest.py` points
+  `XDG_CONFIG_HOME` at a scratch directory, and tests that build an environment
+  by hand should set it too.
+- A user-visible change touches all three: `cli.USAGE`, `README.md`, and a
+  test. For a release, bump `__version__` in
+  `src/omarchy_plugin_gate/__init__.py` and `version` in `pyproject.toml` (a
+  unit test checks they match), and add a `CHANGELOG.md` entry.
+- Style: direct, lowercase commands, plain prose, no filler. Emit `✓`/`✗` only
+  through the existing helpers.
+- Keep the diff focused. The user's working clones, state directory, and
+  installed plugins are not part of this repository; never clean, reset, or
+  "fix" them while working on the gate.
