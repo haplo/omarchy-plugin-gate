@@ -1,0 +1,163 @@
+#compdef omarchy-plugin-gate
+# zsh completion for omarchy-plugin-gate.
+#
+# scripts/install.sh links this file into
+# $XDG_DATA_HOME/zsh/site-functions/_omarchy-plugin-gate. zsh has no per-user
+# completion directory it scans on its own, so put this in ~/.zshrc before
+# compinit:
+#
+#   fpath=(~/.local/share/zsh/site-functions $fpath)
+#
+# Keep the commands and options in step with src/omarchy_plugin_gate/cli.py;
+# tests/unit/test_completions.py fails when they drift apart.
+
+# The subcommand on the line, if one has been typed yet.
+_omarchy_plugin_gate_cmd() {
+  local i
+  for ((i = 2; i < CURRENT; i++)); do
+    case $words[i] in
+    add | check | approve | update | status | doctor)
+      print -r -- $words[i]
+      return 0
+      ;;
+    esac
+  done
+  return 1
+}
+
+# The plugin named on the line: -p NAME, --plugin NAME or --plugin=NAME, or the
+# positional name after `approve`.
+_omarchy_plugin_gate_plugin() {
+  local i word cmd
+  for ((i = 2; i < CURRENT; i++)); do
+    case $words[i] in
+    -p | --plugin)
+      ((i + 1 < CURRENT)) && print -r -- $words[i+1]
+      return 0
+      ;;
+    --plugin=*)
+      print -r -- ${words[i]#--plugin=}
+      return 0
+      ;;
+    esac
+  done
+  cmd=$(_omarchy_plugin_gate_cmd) || return 0
+  [[ $cmd == approve ]] || return 0
+  for ((i = 2; i < CURRENT; i++)); do
+    [[ $words[i] == approve ]] || continue
+    for ((i = i + 1; i < CURRENT; i++)); do
+      word=$words[i]
+      case $word in
+      -p | --plugin | --sha | --reason | --root | --state | --agent | --model | \
+        --notify | --timeout | --max-patch) i=$((i + 1)) ;;
+      -*) ;;
+      *)
+        print -r -- $word
+        return 0
+        ;;
+      esac
+    done
+  done
+  return 0
+}
+
+# The --root and --state given on the line, so _complete looks where the command
+# will. A leading ~ is expanded as the shell will expand it.
+_omarchy_plugin_gate_settings() {
+  local i word value
+  settings=()
+  for ((i = 2; i < CURRENT; i++)); do
+    word=$words[i]
+    case $word in
+    --root | --state)
+      ((i + 1 < CURRENT)) || continue
+      i=$((i + 1))
+      value=$words[i]
+      ;;
+    --root=* | --state=*)
+      value=${word#*=}
+      word=${word%%=*}
+      ;;
+    *) continue ;;
+    esac
+    value=${(Q)value}
+    [[ $value == '~' ]] && value=$HOME
+    [[ $value == '~/'* ]] && value=$HOME/${value#'~/'}
+    [[ -n $value ]] && settings+=($word $value)
+  done
+}
+
+# Ask _complete, with the settings from the line. _call_program evaluates its
+# arguments, so everything after the command is quoted.
+_omarchy_plugin_gate_ask() { # <tag> <_complete arguments...>
+  local tag=$1
+  shift
+  _call_program $tag "$words[1]" ${(q)settings} _complete ${(q)argv}
+}
+
+_omarchy_plugin_gate_complete() {
+  local cur prev cmd name inline=0
+  local -a flags names shas settings
+  cur=$words[CURRENT]
+  prev=$words[CURRENT-1]
+  # --opt=value: complete the value after the =.
+  if [[ $cur == --*=* ]]; then
+    prev=${cur%%=*}
+    cur=${cur#*=}
+    compset -P 1 '*='
+    inline=1
+  fi
+  cmd=$(_omarchy_plugin_gate_cmd) || cmd=
+  name=$(_omarchy_plugin_gate_plugin)
+  _omarchy_plugin_gate_settings
+
+  case $prev in
+  -p | --plugin)
+    names=(${(f)"$(_omarchy_plugin_gate_ask plugins plugins 2>/dev/null)"})
+    [[ -n $names[1] ]] && compadd -a names
+    return
+    ;;
+  --sha)
+    if [[ -n $name ]]; then
+      shas=(${(f)"$(_omarchy_plugin_gate_ask held held "$name" 2>/dev/null)"})
+      [[ -n $shas[1] ]] && compadd -a shas
+    fi
+    return
+    ;;
+  --notify)
+    compadd all ready none
+    return
+    ;;
+  --root | --state)
+    _files -/
+    return
+    ;;
+  --agent | --model | --timeout | --max-patch | --reason | --dir)
+    return
+    ;;
+  esac
+  ((inline)) && return
+
+  flags=(-h --help --root --state --agent --model --notify --timeout --max-patch)
+  case $cmd in
+  add) flags+=(--dir --no-enable) ;;
+  approve) flags+=(-p --plugin --sha --reason --show -n --dry-run) ;;
+  check | update | status) flags+=(-p --plugin) ;;
+  doctor) flags+=(-p --plugin --fix) ;;
+  esac
+  [[ -n $cmd ]] || flags+=(--version)
+
+  if [[ $cur == -* ]]; then
+    compadd -- ${(M)flags:#${(b)cur}*}
+    return
+  fi
+
+  if [[ -z $cmd ]]; then
+    compadd -- add check approve update status doctor
+  elif [[ $cmd == approve && -z $name ]]; then
+    names=(${(f)"$(_omarchy_plugin_gate_ask plugins plugins 2>/dev/null)"})
+    [[ -n $names[1] ]] && compadd -a names
+  fi
+}
+
+_omarchy_plugin_gate_complete "$@"

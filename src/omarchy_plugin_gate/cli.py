@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import NoReturn
 
 from . import __version__, proc
-from .commands import add, approve, check, doctor, post_merge, status, update
+from .commands import add, approve, check, complete, doctor, post_merge, status, update
 from .config import SETTING_FIELDS, Config, Overrides, option_flag
 from .context import Context
 from .output import GateError, say, warn
@@ -59,6 +59,9 @@ Config file, lowest priority: $XDG_CONFIG_HOME/omarchy-plugin-gate/config.toml
 names without the dashes in front: root, state, agent, model, notify, timeout,
 max-patch.
 """
+
+
+COMMANDS = ("add", "approve", "check", "update", "status", "doctor")
 
 
 class _Parser(argparse.ArgumentParser):
@@ -118,8 +121,8 @@ def _plugin_option(p: argparse.ArgumentParser) -> None:
     p.add_argument("-p", "--plugin", default="")
 
 
-def _parse(prog: str, args: Sequence[str]) -> argparse.Namespace | None:
-    """Parse one subcommand's arguments, or print usage and return None for --help."""
+def command_parser(prog: str) -> _Parser:
+    """The parser for one subcommand. Completion tests read its options."""
     p = _parser(prog)
     match prog:
         case "add":
@@ -133,9 +136,17 @@ def _parse(prog: str, args: Sequence[str]) -> argparse.Namespace | None:
             p.add_argument("--reason", nargs="?", const="", default=None)
             p.add_argument("--show", action="store_true")
             p.add_argument("-n", "--dry-run", action="store_true")
-        case _:
+        case "doctor":
             _plugin_option(p)
             p.add_argument("--fix", action="store_true")
+        case _:
+            _plugin_option(p)
+    return p
+
+
+def _parse(prog: str, args: Sequence[str]) -> argparse.Namespace | None:
+    """Parse one subcommand's arguments, or print usage and return None for --help."""
+    p = command_parser(prog)
     ns = p.parse_args(list(args))
     if ns.help:
         say(USAGE.rstrip("\n"))
@@ -168,6 +179,13 @@ def dispatch(self_path: Path, argv: Sequence[str]) -> int:
             return 0
         case "_post-merge":
             return post_merge.run(_context(self_path, lead), args[0] if args else "")
+        case "_complete":
+            # Called on Tab: answer in plain lines, and never print a diagnostic
+            # or fail the user's shell, whatever the config says.
+            try:
+                return complete.run(_context(self_path, lead), args)
+            except Exception:  # noqa: BLE001 - completion must never fail
+                return 0
         case "add":
             if (ns := _parse(cmd, args)) is None:
                 return 0

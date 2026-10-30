@@ -39,6 +39,12 @@ file is for changing the code.
   rerun after changing the agent template or state path. They get the root and
   state from `scripts/paths.py`, which uses `config.py`, so the config file
   applies to them too.
+- `completions/` — bash, zsh and fish completion scripts, hand-written and
+  linked into `$XDG_DATA_HOME` by `install.sh` (`uninstall.sh` removes only
+  links into this repository). They ask the hidden `_complete` command for
+  plugin names and the held commit. A new command or option goes into all
+  three; `tests/unit/test_completions.py` fails otherwise, and `mise run lint`
+  syntax-checks the files when zsh and fish are installed.
 - `config.example.toml` — every setting commented out at its default. A unit
   test uncomments it and checks the result equals the built-in defaults.
 - `systemd/` — nightly `check` service and timer. `%h` paths are rewritten by
@@ -65,7 +71,7 @@ mise run sync          # once: pytest, ruff, ty into .venv
 mise run test          # unit tests + fixture suite
 mise run test:unit     # uv run pytest
 mise run test:fixture  # tests/run; tests/run --keep keeps the fixture
-mise run lint          # ruff format --check, ruff check, ty check, bash -n
+mise run lint          # ruff format --check, ruff check, ty check, shell syntax
 mise run fmt           # ruff format + safe fixes
 ```
 
@@ -161,7 +167,8 @@ Unit tests must never reach a real `opencode` or `omarchy`: put a stub first on
   `<name>` (dashes, like the option); the option wins over the variable, which
   wins over the file. It gets a default in `Config.from_env`, a commented-out
   line at that default in `config.example.toml`, a row in the README settings
-  table, and a line in `cli.USAGE`. There are no unprefixed aliases.
+  table, a line in `cli.USAGE`, and an entry in the option list of all three
+  completion scripts. There are no unprefixed aliases.
 - Unit tests must never read the developer's config file: `conftest.py` points
   `XDG_CONFIG_HOME` at a scratch directory, and tests that build an environment
   by hand should set it too.

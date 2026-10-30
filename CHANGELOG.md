@@ -4,6 +4,27 @@ All notable changes to omarchy-plugin-gate. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-10-29
+
+### Added
+
+- Shell completions for bash, zsh and fish: the commands, their options, the
+  settings options, the plugin names under the gate root, and the held commit
+  for `approve --sha`. The plugin names come from a hidden `_complete` command,
+  so `--root` and `--state` on the line, the environment and the config file
+  apply exactly as they do for the command. `--option=value` completes like
+  `--option value`. `install.sh` links the scripts into `$XDG_DATA_HOME`
+  (`bash-completion/completions`, `fish/vendor_completions.d` and
+  `zsh/site-functions`); `uninstall.sh` removes those links, but only when they
+  point into the repository. bash finds its file through bash-completion and
+  fish scans its own directory; zsh needs
+  `fpath=(~/.local/share/zsh/site-functions $fpath)` before `compinit`.
+
+### Changed
+
+- `--fix` is now only accepted by `doctor`. The other subcommands accepted it
+  and silently ignored it.
+
 ## [0.3.0] - 2026-10-29
 
 ### Added
@@ -198,6 +219,7 @@ Initial release.
 - A nightly systemd user timer for `check`, desktop notifications, mise tasks,
   install and uninstall scripts, and a fixture test suite.
 
+[0.4.0]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/haplo/omarchy-plugin-gate/releases/tag/v0.1.0

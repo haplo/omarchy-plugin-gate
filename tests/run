@@ -570,7 +570,8 @@ iconf=$ih/cfg/omarchy-plugin-gate/config.toml
 mkdir -p "$ih"
 inst() {
   env -u OMARCHY_PLUGIN_GATE_ROOT -u OMARCHY_PLUGIN_GATE_STATE -u XDG_STATE_HOME \
-    HOME="$ih" XDG_CONFIG_HOME="$ih/cfg" OMARCHY_PLUGIN_GATE_BIN_DIR="$ih/bin" "$@"
+    HOME="$ih" XDG_CONFIG_HOME="$ih/cfg" XDG_DATA_HOME="$ih/data" \
+    OMARCHY_PLUGIN_GATE_BIN_DIR="$ih/bin" "$@"
 }
 out=$(inst "$REPO/scripts/install.sh" --no-timer 2>&1)
 eq 'install exits 0' "$?" 0
@@ -584,11 +585,82 @@ eq 'reinstall exits 0' "$?" 0
 cmp -s "$iconf" "$B/config.before" && ok 'reinstall keeps the config' || no 'reinstall keeps the config'
 has <(printf '%s' "$out") "config    $iconf (kept)" 'install reports the kept config'
 [[ -d $ih/gate-state ]] && ok 'install uses the state from the config file' || no 'install uses the state from the config file'
+
+bashc=$ih/data/bash-completion/completions/omarchy-plugin-gate
+fishc=$ih/data/fish/vendor_completions.d/omarchy-plugin-gate.fish
+zshc=$ih/data/zsh/site-functions/_omarchy-plugin-gate
+[[ -L $bashc ]] && ok 'bash completion linked' || no 'bash completion linked'
+[[ -L $fishc ]] && ok 'fish completion linked' || no 'fish completion linked'
+[[ -L $zshc ]] && ok 'zsh completion linked' || no 'zsh completion linked'
+cmp -s "$bashc" "$REPO/completions/omarchy-plugin-gate.bash" &&
+  ok 'bash completion points at the repository' || no 'bash completion points at the repository'
+has <(printf '%s' "$out") "bash  $bashc" 'install reports the completions'
+# The words after the command, as readline hands them over: --opt=value arrives
+# as --opt, = and value. The last word is the one being completed.
+bash_complete() {
+  bash -c '
+    source "$1"
+    shift
+    COMP_WORDS=("$@")
+    COMP_CWORD=$(($# - 1))
+    _omarchy_plugin_gate
+    printf "%s\n" "${COMPREPLY[@]}"
+  ' _ "$REPO/completions/omarchy-plugin-gate.bash" "$GATE" "$@" 2>&1
+}
+mkdir -p "$B/state/demo" "$B/other-root/second"
+printf '0123456789abcdef0123456789abcdef01234567\nwhy\n' >"$B/state/demo/held"
+printf '{"id": "second"}\n' >"$B/other-root/second/manifest.json"
+eq 'bash completion offers plugin names' "$(bash_complete status -p de)" demo
+eq 'bash completion offers the held commit for --sha' \
+  "$(bash_complete approve demo --sha '')" 0123456789ab
+eq 'bash completion reads --plugin=NAME' \
+  "$(bash_complete approve --plugin = demo --sha '')" 0123456789ab
+eq 'bash completion completes after --plugin=' "$(bash_complete status --plugin = de)" demo
+eq 'bash completion completes after --notify=' "$(bash_complete status --notify = r)" ready
+eq 'bash completion uses --root from the line' \
+  "$(bash_complete --root "$B/other-root" status -p '')" second
+eq 'bash completion uses --root= from the line' \
+  "$(bash_complete status --root = "$B/other-root" -p '')" second
+eq 'bash completion expands ~ in --root' \
+  "$(HOME=$B bash_complete --root '~/other-root' status -p '')" second
+eq 'bash completion offers no second plugin to approve' "$(bash_complete approve demo '')" ''
+eq 'bash completion offers --version before the command' "$(bash_complete --ver)" --version
+eq 'bash completion offers no --version after the command' "$(bash_complete status --ver)" ''
+
+if command -v fish >/dev/null 2>&1; then
+  # fish runs `omarchy-plugin-gate` from PATH, so put this build there.
+  mkdir -p "$B/fish-bin"
+  ln -sfn "$GATE" "$B/fish-bin/omarchy-plugin-gate"
+  fish_complete() {
+    PATH="$B/fish-bin:$PATH" fish --no-config -c '
+      source $argv[1]
+      complete -C"omarchy-plugin-gate $argv[2]" | string replace -r "\t.*" ""
+    ' "$REPO/completions/omarchy-plugin-gate.fish" "$1" 2>&1
+  }
+  eq 'fish completion offers plugin names to approve' "$(fish_complete 'approve de')" demo
+  eq 'fish completion offers no second plugin to approve' "$(fish_complete 'approve demo ')" ''
+  eq 'fish completion offers no positional after --plugin' \
+    "$(fish_complete 'approve --plugin demo ')" ''
+  eq 'fish completion offers the held commit for --sha' \
+    "$(fish_complete 'approve demo --sha ')" 0123456789ab
+  eq 'fish completion uses --root from the line' \
+    "$(fish_complete "--root $B/other-root status -p ")" second
+  eq 'fish completion offers no --version after the command' "$(fish_complete 'status --ver')" ''
+else
+  ok 'fish completion (skipped: fish not installed)'
+fi
+
 out=$(inst "$REPO/scripts/uninstall.sh" 2>&1)
 eq 'uninstall exits 0' "$?" 0
 [[ ! -e $ih/bin/omarchy-plugin-gate ]] && ok 'uninstall removes the command' || no 'uninstall removes the command'
 cmp -s "$iconf" "$B/config.before" && ok 'uninstall keeps the config' || no 'uninstall keeps the config'
 has <(printf '%s' "$out") "review evidence  $ih/gate-state" 'uninstall uses the state from the config file'
+[[ ! -L $bashc ]] && ok 'uninstall removes the bash completion' || no 'uninstall removes the bash completion'
+[[ ! -L $fishc ]] && ok 'uninstall removes the fish completion' || no 'uninstall removes the fish completion'
+[[ ! -L $zshc ]] && ok 'uninstall removes the zsh completion' || no 'uninstall removes the zsh completion'
+printf '#!/usr/bin/env bash\n' >"$bashc"
+out=$(inst "$REPO/scripts/uninstall.sh" 2>&1)
+[[ -f $bashc ]] && ok 'uninstall keeps a completion file of your own' || no 'uninstall keeps a completion file of your own'
 
 printf '\n'
 if ((FAILS > 0)); then
@@ -596,3 +668,4 @@ if ((FAILS > 0)); then
   exit 1
 fi
 printf 'all checks passed\n'
+  

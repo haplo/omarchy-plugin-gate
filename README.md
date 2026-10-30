@@ -25,14 +25,41 @@ mise trust          # once: allow mise to run this project's tasks
 mise run install
 ```
 
-`mise run install` symlinks the command to `~/.local/bin`, renders the reviewer
-agent into `~/.config/opencode/agents/`, copies
-[`config.example.toml`](config.example.toml) to
-`~/.config/omarchy-plugin-gate/config.toml` if there is no config file yet,
-installs the systemd user units and enables the nightly check. Use
-`mise run install:no-timer` to skip the timer.
+The installation does several things:
 
-Without mise, `scripts/install.sh` does the same thing.
+1. Symlinks the `omarchy-plugin-gate` command to `~/.local/bin`.
+2. Links the shell completions into `~/.local/share`.
+3. Places the reviewer agent prompt into `~/.config/opencode/agents/`.
+4. Copies [`config.example.toml`](config.example.toml) to
+`~/.config/omarchy-plugin-gate/config.toml` if there is no config file yet.
+5. Installs the systemd user units and enables the daily check. Use `mise run
+   install:no-timer` to skip the timer.
+
+Without mise, [scripts/install.sh](scripts/install.sh) does the same thing.
+
+### Shell completions
+
+`install.sh` links completions for bash, zsh and fish into
+`$XDG_DATA_HOME` (`~/.local/share` when it is unset or not absolute):
+
+| Shell | Path |
+|---|---|
+| bash | `$XDG_DATA_HOME/bash-completion/completions/omarchy-plugin-gate` |
+| fish | `$XDG_DATA_HOME/fish/vendor_completions.d/omarchy-plugin-gate.fish` |
+| zsh | `$XDG_DATA_HOME/zsh/site-functions/_omarchy-plugin-gate` |
+
+bash finds its file through bash-completion, and fish scans
+`vendor_completions.d` itself. zsh has no per-user directory that it scans, so
+add this to `~/.zshrc`, before `compinit`:
+
+```sh
+fpath=(~/.local/share/zsh/site-functions $fpath)
+```
+
+They complete the commands, their options, the plugin names under the gate
+root, and the held commit for `approve --sha`. The root and state come from
+`--root` and `--state` on the line, the environment and the config file, as
+they do for the command. Both `--option value` and `--option=value` work.
 
 Then wire up whatever is already cloned:
 
@@ -280,9 +307,10 @@ mise run test:fixture   # or: tests/run
 The unit tests (pytest) cover the pure pieces in isolation: path, danger and
 hint patterns; NUL-separated git parsing with awkward file names; every way a
 reviewer answer can fail to clear a finding or prove it saw the patch; the
-state file formats; and the fail-closed paths (a git error mid-review, a
-reviewer that crashes after `REVIEW PASS`, a reviewer that times out and leaves
-children behind).
+state file formats; the shell completion scripts staying in step with the
+parser; and the fail-closed paths (a git error mid-review, a reviewer that
+crashes after `REVIEW PASS`, a reviewer that times out and leaves children
+behind).
 
 The fixture suite (`tests/run`, bash, needs `jq`) is the end-to-end contract.
 It builds throwaway repositories in a temporary directory, uses a stub
@@ -292,7 +320,9 @@ called), every kind of structural finding reaching the reviewer, each way a
 reviewer can fail to clear a finding, a missing, wrong or planted code word,
 reviewer failure and crash, the reviewer's working directory, options winning
 over the environment and the environment over the config file, install copying
-the example config without overwriting one, `doctor`
+the example config without overwriting one, shell completions being linked on
+install and removed on uninstall (keeping a file of your own) and completing
+plugin names and held commits in bash and, when installed, fish, `doctor`
 spotting a stale reviewer agent, update applying and refusing, the tripwire
 rolling back a rejected pull while leaving local commits alone, notification
 policy, one-time approvals (including dry run, `--sha`, `--show`, and the
@@ -304,9 +334,10 @@ resulting update), and both `add` outcomes. No network, no real plugin install.
 mise run uninstall
 ```
 
-Removes the command, reviewer agent, units and the tripwires. The config file,
-working clones, review evidence and installed plugins are kept; the output explains how to point
-the installed copies back at their upstream repositories.
+Removes the command, reviewer agent, completions, units and the tripwires. The
+config file, working clones, review evidence and installed plugins are kept;
+the output explains how to point the installed copies back at their upstream
+repositories.
 
 ## Limits, honestly
 

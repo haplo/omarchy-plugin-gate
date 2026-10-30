@@ -8,6 +8,8 @@ REPO=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)
 BIN_DIR=${OMARCHY_PLUGIN_GATE_BIN_DIR:-$HOME/.local/bin}
 CONFIG_HOME=${XDG_CONFIG_HOME:-}
 [[ $CONFIG_HOME == /* ]] || CONFIG_HOME=$HOME/.config
+DATA_HOME=${XDG_DATA_HOME:-}
+[[ $DATA_HOME == /* ]] || DATA_HOME=$HOME/.local/share
 CONFIG_FILE=$CONFIG_HOME/omarchy-plugin-gate/config.toml
 # The root and state may be set in the config file, so ask the gate. If it
 # cannot say (a broken config, say), fall back to the environment.
@@ -21,6 +23,9 @@ else
 fi
 UNIT_DIR=$CONFIG_HOME/systemd/user
 AGENT_FILE=$CONFIG_HOME/opencode/agents/plugin-reviewer.md
+BASH_COMPLETION_DIR=$DATA_HOME/bash-completion/completions
+FISH_COMPLETION_DIR=$DATA_HOME/fish/vendor_completions.d
+ZSH_COMPLETION_DIR=$DATA_HOME/zsh/site-functions
 
 if command -v systemctl >/dev/null 2>&1; then
   systemctl --user disable --now omarchy-plugin-gate-check.timer >/dev/null 2>&1 || true
@@ -43,6 +48,21 @@ if [[ -f $AGENT_FILE ]] && grep -q 'Reviews an Omarchy shell plugin diff' "$AGEN
   echo "removed $AGENT_FILE"
 fi
 
+# Only links into this repository: a completion file of the user's own stays.
+remove_completion() { # <path>
+  local target
+  [[ -L $1 ]] || return 0
+  target=$(readlink -f "$1" 2>/dev/null || true)
+  if [[ $target == "$REPO/completions/"* ]]; then
+    rm -f "$1"
+    echo "removed $1"
+  fi
+}
+
+remove_completion "$BASH_COMPLETION_DIR/omarchy-plugin-gate"
+remove_completion "$FISH_COMPLETION_DIR/omarchy-plugin-gate.fish"
+remove_completion "$ZSH_COMPLETION_DIR/_omarchy-plugin-gate"
+
 remove_hooks() {
   local base=$1 dir hp hook
   [[ -d $base ]] || return 0
@@ -63,7 +83,7 @@ remove_hooks "$CONFIG_HOME/omarchy/plugins"
 
 cat <<EOF
 
-Removed the command, reviewer agent and timer.
+Removed the command, reviewer agent, completions and timer.
 
 Kept on purpose:
   config           $CONFIG_FILE
