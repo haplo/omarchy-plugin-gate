@@ -3,7 +3,7 @@
 from . import mechanics, reviewer
 from .context import Context
 from .git import Repo
-from .output import printable
+from .output import info, printable
 from .state import ReviewDir, write_atomic
 
 
@@ -37,6 +37,11 @@ def _review(ctx: Context, name: str, clone: Repo, old: str | None, new: str, rd:
 
     hints = mechanics.hints(code_lines)
     write_atomic(rd.hints, "".join(f"{h}\n" for h in hints))
+
+    if mech.findings:
+        info(f"{len(mech.findings)} structural finding(s) for the reviewer:")
+        for i, text in enumerate(mech.findings, 1):
+            info(f"  F{i} {text}")
 
     code = reviewer.new_code()
     write_atomic(rd.review_patch, reviewer.review_copy(patch, code))

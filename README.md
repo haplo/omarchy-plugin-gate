@@ -141,7 +141,8 @@ held                             the last commit that failed and why
 - more than 40 structural findings in one candidate
 
 *Findings* are pattern matches that usually, but not always, mean trouble. They
-are numbered `F1`, `F2`, … and handed to the reviewer with the patch:
+are numbered `F1`, `F2`, …, printed one per line before the review starts, and
+handed to the reviewer with the patch:
 
 - binary files outside common asset types
 - `.git/`, `.ssh/`, `authorized_keys`, `sudoers`, `systemd/`, `omarchy/hooks`,

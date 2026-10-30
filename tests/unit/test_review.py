@@ -130,6 +130,33 @@ def test_hard_failure_skips_the_model(
     assert "byte review limit" in verdict(small, new)[1]
 
 
+def test_findings_are_printed_before_the_review(
+    ctx: Context,
+    upstream: Upstream,
+    stub_bin: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    reviewer_stub(stub_bin, "exit 1")
+    base = git(upstream.path, "rev-parse", "HEAD")
+    upstream.write("a.desktop", "[Desktop Entry]\n")
+    upstream.write("b.desktop", "[Desktop Entry]\n")
+    new = upstream.commit()
+    review(ctx, "demo", upstream.repo, base, new)
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == "  2 structural finding(s) for the reviewer:"
+    assert lines[1].startswith("    F1 ") and "a.desktop" in lines[1]
+    assert lines[2].startswith("    F2 ") and "b.desktop" in lines[2]
+
+
+def test_no_findings_prints_nothing(
+    ctx: Context, upstream: Upstream, stub_bin: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    reviewer_stub(stub_bin, "exit 1")
+    base, new = candidate(upstream)
+    review(ctx, "demo", upstream.repo, base, new)
+    assert "structural finding" not in capsys.readouterr().out
+
+
 def test_rereview_does_not_inherit_evidence(
     ctx: Context, upstream: Upstream, stub_bin: Path
 ) -> None:

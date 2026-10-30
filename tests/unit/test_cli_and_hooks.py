@@ -52,6 +52,7 @@ def test_unknown_command(capsys: pytest.CaptureFixture[str]) -> None:
         ["add", "--dir"],
         ["add", "url", "--dir", ""],
         ["status", "-p", ""],
+        ["check", "--fix"],
     ],
 )
 def test_bad_arguments_exit_1(argv: list[str], capsys: pytest.CaptureFixture[str]) -> None:

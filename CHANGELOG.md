@@ -24,6 +24,8 @@ All notable changes to omarchy-plugin-gate. The format follows
 
 - `--fix` is now only accepted by `doctor`. The other subcommands accepted it
   and silently ignored it.
+- `check` and `add` print the structural findings, one per line, before the
+  reviewer starts. The tripwire hook writes them to `hooks.log`.
 
 ## [0.3.0] - 2026-10-29
 

@@ -208,15 +208,16 @@ case_hard() { # case_hard <label> <expression> <expected reason substring> [VAR=
 }
 
 case_finding() { # case_finding <label> <expression> <expected finding substring>
-  local label=$1 expr=$2 want=$3 base n0 n1
+  local label=$1 expr=$2 want=$3 base n0 n1 out
   base=$(ap)
   reset_upstream "$base"
   commit_upstream "$expr" "$label"
   n0=$(invocations)
-  "$GATE" check >/dev/null 2>&1
+  out=$("$GATE" check 2>&1)
   n1=$(invocations)
   eq "$label: reviewer consulted" "$((n1 - n0))" 1
   has "$(vdir)findings.txt" "$want" "$label: finding recorded"
+  has <(printf '%s\n' "$out" | grep -E '^    F1 ') "$want" "$label: finding printed"
   has "$STUB_PROMPT" "$want" "$label: finding in the prompt"
   eq "$label: verdict PASS once cleared" "$(last_verdict)" "REVIEW PASS"
   eq "$label: approved advanced" "$(ap)" "$(upstream_sha)"

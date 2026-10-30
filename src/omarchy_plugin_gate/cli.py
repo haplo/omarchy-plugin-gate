@@ -26,7 +26,8 @@ usage: omarchy-plugin-gate [options] <command> [command options] [options]
   check [-p NAME]
       Fetch upstream, review new commits, stage approved ones. Never installs.
       Hard structural failures are held without a model call; other structural
-      findings go to the reviewer, which must clear each one.
+      findings are listed, one per line, and go to the reviewer, which must
+      clear each one.
 
   approve <name> [--sha SHA] [--reason TEXT] [--show] [-n|--dry-run]
       One-time human approval for a candidate the gate held back. Shows the
