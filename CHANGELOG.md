@@ -26,6 +26,18 @@ All notable changes to omarchy-plugin-gate. The format follows
   and silently ignored it.
 - `check` and `add` print the structural findings, one per line, before the
   reviewer starts. The tripwire hook writes them to `hooks.log`.
+- `update -p <name>` installs and enables a plugin that is approved but has no
+  installed copy yet, the way `add` would have. Plain `update` lists such
+  plugins instead, so one removed on purpose stays removed, and `status` names
+  the command.
+
+### Fixed
+
+- A plugin whose first review failed in `add` could not be installed: `add`
+  refused the existing clone and `update` skipped it. `add` now records the
+  failed commit as held, so `approve <name>` finds it, and points to
+  `approve` and `update -p <name>`. The same path recovers a failed
+  `omarchy plugin add`.
 
 ## [0.3.0] - 2026-10-29
 

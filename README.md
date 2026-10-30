@@ -206,6 +206,10 @@ the patch that was on screen. The failed verdict is left untouched, so `status`
 shows both `REVIEW FAIL` and `approval waived by hand`. `approve` moves
 `gate-approved` and installs the hooks; `update` still does the installation.
 
+The same works for a plugin whose first review failed in `add`: the clone is
+kept and the commit is held, so `approve <name>` followed by
+`update -p <name>` installs and enables it.
+
 Approval covers the held candidate only. It does not fetch, and `--sha` must
 name a commit that is still reachable from `origin/<branch>`. Hard structural
 failures can be waived too: the failures and findings are printed first, so read
@@ -327,7 +331,8 @@ plugin names and held commits in bash and, when installed, fish, `doctor`
 spotting a stale reviewer agent, update applying and refusing, the tripwire
 rolling back a rejected pull while leaving local commits alone, notification
 policy, one-time approvals (including dry run, `--sha`, `--show`, and the
-resulting update), and both `add` outcomes. No network, no real plugin install.
+resulting update), both `add` outcomes, and installing a plugin whose `add`
+review failed once it has been approved by hand. No network, no real plugin install.
 
 ## Uninstall
 

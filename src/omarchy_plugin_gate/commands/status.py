@@ -51,6 +51,8 @@ def show_one(ctx: Context, name: str) -> None:
             info(f"findings  {rd.cleared_count()} cleared by the reviewer — {rd.cleared}")
     if state == "held back":
         info(f"next      omarchy-plugin-gate approve -p {name}   (or check -p {name} to retry)")
+    elif state == "approved, not installed":
+        info(f"next      omarchy-plugin-gate update -p {name}")
 
     latest = ctx.state.latest_review_dir(name)
     verdict = latest.verdict_lines() if latest else []

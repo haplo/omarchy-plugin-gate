@@ -36,6 +36,8 @@ usage: omarchy-plugin-gate [options] <command> [command options] [options]
 
   update [-p NAME]
       Apply approved commits to ~/.config/omarchy/plugins/<id> and rescan.
+      With -p, a plugin that is approved but not installed yet (say, approved
+      by hand after add held it back) is installed and enabled.
 
   status [-p NAME]
       What is installed, approved, upstream, and held.

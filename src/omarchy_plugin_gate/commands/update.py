@@ -5,6 +5,7 @@ from ..config import APPROVED_REF
 from ..context import Context
 from ..git import Repo
 from ..hooks import ensure_hooks
+from ..install import install_new
 from ..notify import notify, notify_close
 from ..output import info, say, warn
 from ..plugins import selected_names
@@ -21,8 +22,10 @@ def _roll_back(ctx: Context, name: str, installed: Repo, before: str | None) -> 
     disable_plugin(ctx.manifest_id(name))
 
 
-def update_one(ctx: Context, name: str) -> bool:
-    """True when a new commit was installed."""
+def update_one(ctx: Context, name: str, *, first_install: bool) -> bool:
+    """True when a new commit was installed. `first_install` lets a plugin with
+    no installed copy be installed; only for plugins named on the command line,
+    so one removed on purpose does not come back."""
     clone = ctx.clone(name)
     approved = clone.rev(APPROVED_REF)
     if not approved:
@@ -33,8 +36,14 @@ def update_one(ctx: Context, name: str) -> bool:
         return False
     idir = ctx.installed_dir(name)
     if idir is None or not idir.is_dir():
-        info(f"{name}: not installed (use: omarchy-plugin-gate add <url>)")
-        return False
+        if not first_install:
+            info(
+                f"{name}: approved {approved[:12]}, not installed "
+                f"(install with: omarchy-plugin-gate update -p {name})"
+            )
+            return False
+        say(f"{name}: installing {approved[:12]} (first install)")
+        return install_new(ctx, name, approved, enable_after=True)
     before = installed_sha(idir)
     if before == approved:
         info(f"{name}: up to date ({approved[:12]})")
@@ -83,7 +92,7 @@ def run(ctx: Context, want: str) -> int:
     applied = 0
     for name in selected_names(ctx.cfg, want):
         try:
-            applied += update_one(ctx, name)
+            applied += update_one(ctx, name, first_install=bool(want))
         except (proc.CommandError, OSError) as e:
             warn(f"{name}: {e}")
 

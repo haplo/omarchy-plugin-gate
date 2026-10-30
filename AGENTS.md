@@ -26,6 +26,8 @@ file is for changing the code.
     reviewer's output into a verdict.
   - `review.py` — one candidate end to end; the fail-closed boundary.
   - `state.py` — markers, waivers, held, evidence directories, log.
+  - `install.py` — first install of an approved commit (`omarchy plugin add`
+    from the clone, then enable), shared by `add` and `update -p`.
   - `hooks.py`, `notify.py`, `plugins.py`, `context.py`, `commands/*.py`.
 - `agents/plugin-reviewer.md.in` — reviewer agent, installed verbatim. The
   agent is deny-all except `read`/`glob`/`grep`; its scope comes from the
