@@ -7,7 +7,7 @@ from .. import mechanics
 from ..config import APPROVED_REF
 from ..context import Context
 from ..hooks import ensure_hooks
-from ..output import GateError, indented, info, say, warn
+from ..output import GateError, indented, info, printable, safe_text, say, warn
 from ..plugins import selected_names
 from ..state import one_line, read_lines
 from . import advance_main
@@ -51,7 +51,7 @@ def run(ctx: Context, args: ApproveArgs) -> int:
     say(f"{name}: candidate {sha[:12]}")
     verdict = rd.verdict_lines()
     if verdict:
-        info(f"verdict   {verdict[0]}")
+        info(f"verdict   {printable(verdict[0])}")
         indented(verdict[1:6])
     else:
         warn(f"{name}: no review verdict recorded for {sha[:12]}")
@@ -69,17 +69,19 @@ def run(ctx: Context, args: ApproveArgs) -> int:
     if rd.patch.is_file():
         info(f"patch     {rd.patch}")
     if held and held.sha == sha:
-        reasons = "\n".join(held.reasons[:5])
-        if reasons.strip():
-            info(f"held      {reasons}")
+        reasons = held.reasons[:5]
+        if "".join(reasons).strip():
+            info(f"held      {printable(reasons[0])}")
+            indented(reasons[1:])
 
     if args.show:
         if rd.patch.is_file():
             say()
             say("--- patch ---")
-            sys.stdout.flush()
-            sys.stdout.buffer.write(rd.patch.read_bytes())
-            sys.stdout.buffer.flush()
+            # The patch is the plugin author's bytes: escape control characters so
+            # it cannot rewrite the screen or reach the terminal's clipboard.
+            text = rd.patch.read_bytes().decode("utf-8", "replace").removesuffix("\n")
+            say(safe_text(text))
             say("--- end patch ---")
         else:
             warn(f"{name}: no patch recorded for {sha[:12]}")

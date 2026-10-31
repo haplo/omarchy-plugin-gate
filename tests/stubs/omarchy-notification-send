@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+printf 'notify %s\n' "$*" >>"$NOTIFY_LOG"
+printf '4242\n'

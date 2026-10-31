@@ -74,7 +74,7 @@ run = [
   "uv run --locked ruff format --check src tests/unit bin/omarchy-plugin-gate scripts/paths.py",
   "uv run --locked ruff check src tests/unit bin/omarchy-plugin-gate scripts/paths.py",
   "uv run --locked ty check",
-  "bash -n scripts/install.sh scripts/uninstall.sh tests/run completions/omarchy-plugin-gate.bash",
+  "for f in scripts/install.sh scripts/uninstall.sh tests/run tests/lib/*.sh tests/suites/*.sh tests/stubs/* completions/omarchy-plugin-gate.bash; do bash -n \"$f\" || exit 1; done",
   "if command -v zsh >/dev/null 2>&1; then zsh -n completions/_omarchy-plugin-gate; fi",
   "if command -v fish >/dev/null 2>&1; then fish --no-execute completions/omarchy-plugin-gate.fish; fi",
 ]

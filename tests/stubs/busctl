@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+printf 'busctl %s\n' "$*" >>"$BUSCTL_LOG"
+exit 0

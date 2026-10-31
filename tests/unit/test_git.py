@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from omarchy_plugin_gate.commands import advance_main
 from omarchy_plugin_gate.git import Repo, parse_numstat_z, parse_raw_z
 from support import Upstream, git
 
@@ -98,6 +99,47 @@ def test_user_config_does_not_change_the_patch(upstream: Upstream, tmp_path: Pat
     patch = upstream.repo.diff(base, new)
     assert b"\x1b[" not in patch
     assert b"diff --git a/Widget.qml b/Widget.qml" in patch
+
+
+def test_tree_paths_lists_every_file(upstream: Upstream) -> None:
+    upstream.write("sub/deep/.gitattributes", "x\n")
+    upstream.write("line\nbreak", "x\n")
+    new = upstream.commit()
+    assert sorted(upstream.repo.tree_paths(new)) == [
+        "Widget.qml",
+        "line\nbreak",
+        "manifest.json",
+        "sub/deep/.gitattributes",
+    ]
+
+
+def test_blob_sizes(upstream: Upstream) -> None:
+    upstream.write("five", "12345")
+    new = upstream.commit()
+    blob = git(upstream.path, "rev-parse", f"{new}:five")
+    sizes = upstream.repo.blob_sizes([blob, blob, new, Z40])
+    assert sizes == {blob: 5}
+    assert upstream.repo.blob_sizes([]) == {}
+
+
+def test_advance_main_does_not_run_filters(upstream: Upstream, tmp_path: Path) -> None:
+    clones = [tmp_path / "gate", tmp_path / "plain"]
+    for clone in clones:
+        git(tmp_path, "clone", "-q", str(upstream.path), str(clone))
+        git(clone, "config", "filter.evil.smudge", "sed s/reviewed/SMUDGED/")
+        git(clone, "config", "filter.evil.clean", "cat")
+    upstream.write(".gitattributes", "*.qml filter=evil\n")
+    upstream.write("Widget.qml", "reviewed\n")
+    new = upstream.commit()
+    for clone in clones:
+        git(clone, "fetch", "-q")
+
+    advance_main(Repo(clones[0]), new)
+    assert git(clones[0], "rev-parse", "HEAD") == new
+    assert (clones[0] / "Widget.qml").read_text() == "reviewed\n"
+    # The same merge without the gate's protection runs the filter.
+    git(clones[1], "merge", "-q", "--ff-only", new)
+    assert (clones[1] / "Widget.qml").read_text() == "SMUDGED\n"
 
 
 def test_rev_does_not_take_options(upstream: Upstream) -> None:

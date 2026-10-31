@@ -1,14 +1,16 @@
 """Structural checks, in two tiers.
 
-Hard failures are things the model cannot judge (a patch too large or not text)
-or that break the gate's own bookkeeping (manifest identity, loadability); they
-are a REVIEW FAIL with no model call. Findings are pattern matches that are
-usually, but not always, a problem; they go to the reviewer numbered F1..Fn and
-each must be explicitly cleared. Keyword hits go to the reviewer as plain hints.
+Hard failures are things the model cannot judge (a patch too large or not text,
+code git shows only as binary) or that break the gate's own bookkeeping
+(manifest identity, loadability); they are a REVIEW FAIL with no model call.
+Findings are pattern matches that are usually, but not always, a problem; they
+go to the reviewer numbered F1..Fn and each must be explicitly cleared. Keyword
+hits go to the reviewer as plain hints.
 """
 
 import io
 import json
+import posixpath
 import tarfile
 import tempfile
 from collections import Counter
@@ -93,14 +95,58 @@ def utf8_problem(patch: bytes) -> str | None:
 
 
 def path_findings(changes: Iterable[Change]) -> list[str]:
+    return [
+        f"plugin touches a path it has no business touching: {printable(c.path)}"
+        for c in changes
+        if patterns.is_denied(c.path)
+    ]
+
+
+def binary_problems(
+    changes: Iterable[Change], entry_points: set[str], blob: Callable[[str], bytes | None]
+) -> tuple[list[str], list[str]]:
+    """(hard failures, findings) for files git treats as binary.
+
+    The patch shows such a file as "Binary files differ", so the reviewer never
+    sees its contents. Code, native libraries, entry points and executables are
+    hard failures; an asset whose contents do not match its type, and any other
+    binary, are findings.
+    """
+    hard: list[str] = []
     found: list[str] = []
     for c in changes:
+        if c.status == "D" or not c.binary:
+            continue
         shown = printable(c.path)
-        if c.binary and not patterns.is_known_asset(c.path):
+        head = (blob(c.new_blob) or b"")[:16]
+        if head.startswith(b"\x7fELF") or patterns.is_native_path(c.path):
+            hard.append(f"{shown} is a native executable or library — needs a human")
+        elif patterns.is_code_path(c.path) or c.path in entry_points or c.new_mode == "100755":
+            hard.append(f"{shown} is binary to git, so the reviewer cannot read it — needs a human")
+        elif not patterns.is_known_asset(c.path):
             found.append(f"binary file added or changed outside a known asset type: {shown}")
-        if patterns.is_denied(c.path):
-            found.append(f"plugin touches a path it has no business touching: {shown}")
-    return found
+        elif not patterns.asset_matches(c.path, head):
+            found.append(f"asset file does not look like its type: {shown}")
+    return hard, found
+
+
+def mode_problems(changes: Iterable[Change]) -> list[str]:
+    """Hard failures for symlinks and submodules, which the patch shows only as
+    a target path or a `Subproject commit` line."""
+    problems: list[str] = []
+    for c in changes:
+        if c.status == "D":
+            continue
+        shown = printable(c.path)
+        if c.new_mode == "120000":
+            problems.append(f"symlink {shown}: plugins may not contain symlinks — needs a human")
+        elif c.new_mode == "160000":
+            problems.append(f"submodule {shown}: the reviewer cannot see its code — needs a human")
+        if posixpath.basename(c.path) == ".gitmodules":
+            problems.append(
+                f"{shown}: submodule configuration in the plugin (.gitmodules) — needs a human"
+            )
+    return problems
 
 
 def exec_findings(changes: Iterable[Change], blob: Callable[[str], bytes | None]) -> list[str]:
@@ -115,6 +161,52 @@ def exec_findings(changes: Iterable[Change], blob: Callable[[str], bytes | None]
         if not content.startswith(b"#!"):
             found.append(f"file made executable without a shebang: {shown}")
     return found
+
+
+def attribute_problems(files: dict[str, bytes | None]) -> list[str]:
+    """Hard failures for .gitattributes files (path -> contents) that set a filter.
+
+    The patch shows the committed blob, but every checkout runs the filter
+    configured on the machine (`git lfs install` sets one up globally), so the
+    files on disk would not be the files that were reviewed.
+    """
+    problems: list[str] = []
+    for path, content in files.items():
+        shown = printable(path)
+        if content is None:
+            problems.append(f"{shown} could not be read — needs a human")
+            continue
+        for raw in content.split(b"\n"):
+            line = raw.strip(b" \t\r")
+            if line and not line.startswith(b"#") and patterns.ATTR_FILTER.search(line):
+                text = printable(line.decode("utf-8", "replace"))[:200]
+                problems.append(
+                    f".gitattributes sets a filter ({shown}: {text}) — checked-out content "
+                    "would differ from the reviewed patch; needs a human"
+                )
+                break
+    return problems
+
+
+def lfsconfig_problems(paths: Iterable[str]) -> list[str]:
+    return [
+        f"{printable(p)}: git-lfs configuration in the plugin (.lfsconfig) — needs a human"
+        for p in paths
+        if posixpath.basename(p) == ".lfsconfig"
+    ]
+
+
+def lfs_pointer_problems(
+    changes: Iterable[Change], small_blob: Callable[[str], bytes | None]
+) -> list[str]:
+    """Changed files that are Git LFS pointers. `small_blob` returns the contents
+    of a blob of at most LFS_POINTER_MAX bytes, None for anything larger."""
+    return [
+        f"{printable(c.path)} is an LFS pointer; the reviewer would see the pointer, "
+        "not the file — needs a human"
+        for c in changes
+        if c.status != "D" and patterns.LFS_POINTER.match(small_blob(c.new_blob) or b"")
+    ]
 
 
 def _compact(value: Any) -> str:
@@ -145,6 +237,23 @@ def manifest_change(
     if a != b:
         found.append(f"manifest kinds/entryPoints changed: {a} -> {b}")
     return hard, found
+
+
+def id_problem(manifest: dict[str, Any]) -> str | None:
+    """The gate's own id check, so it holds whether or not `omarchy` can run."""
+    value = manifest.get("id")
+    if patterns.valid_plugin_id(value):
+        return None
+    shown = printable(_compact(value) if "id" in manifest else "missing")[:200]
+    return f"manifest id is not a valid plugin id ({shown}) — needs a human"
+
+
+def entry_point_paths(manifest: dict[str, Any] | None) -> set[str]:
+    """The files the manifest's entry points name, as paths in the tree."""
+    eps = manifest.get("entryPoints") if manifest is not None else None
+    if not isinstance(eps, dict):
+        return set()
+    return {posixpath.normpath(v) for v in eps.values() if isinstance(v, str) and v}
 
 
 def entry_point_problems(manifest: dict[str, Any], exists: Callable[[str], bool]) -> list[str]:
@@ -195,7 +304,7 @@ def hints(lines: Iterable[str]) -> list[str]:
 def validate_tree(repo: Repo, rev: str) -> str | None:
     """Validate the candidate tree itself, not whatever the clone has checked out."""
     if proc.which("omarchy") is None:
-        return None
+        return "omarchy is not on PATH, so the candidate could not be validated — needs a human"
     with tempfile.TemporaryDirectory(prefix="omarchy-plugin-gate.") as tmp:
         try:
             with tarfile.open(fileobj=io.BytesIO(repo.archive(rev)), mode="r:") as tar:
@@ -220,12 +329,33 @@ def check(
     if problem := utf8_problem(patch):
         result.hard.append(problem)
 
+    new_raw = repo.blob(f"{new}:manifest.json")
+    new_manifest = parse_manifest(new_raw)
+
     changes = repo.changes(base, new)
+    hard, found = binary_problems(changes, entry_point_paths(new_manifest), repo.blob)
+    result.hard += hard
+    result.findings += found
+    result.hard += mode_problems(changes)
     result.findings += path_findings(changes)
     result.findings += exec_findings(changes, repo.blob)
 
-    new_raw = repo.blob(f"{new}:manifest.json")
-    new_manifest = parse_manifest(new_raw)
+    # Attributes apply across the whole tree: one added earlier can match a
+    # file added now.
+    paths = repo.tree_paths(new)
+    attributes = {
+        p: repo.blob(f"{new}:{p}") for p in paths if posixpath.basename(p) == ".gitattributes"
+    }
+    result.hard += attribute_problems(attributes)
+    result.hard += lfsconfig_problems(paths)
+    sizes = repo.blob_sizes(c.new_blob for c in changes if c.status != "D")
+
+    def small_blob(sha: str) -> bytes | None:
+        size = sizes.get(sha)
+        return repo.blob(sha) if size is not None and size <= patterns.LFS_POINTER_MAX else None
+
+    result.hard += lfs_pointer_problems(changes, small_blob)
+
     if old:
         old_raw = repo.blob(f"{old}:manifest.json")
         if old_raw != new_raw:
@@ -238,6 +368,8 @@ def check(
             "manifest.json is missing or not a JSON object at this revision — needs a human"
         )
     else:
+        if problem := id_problem(new_manifest):
+            result.hard.append(problem)
         result.hard += entry_point_problems(new_manifest, lambda p: repo.exists(f"{new}:{p}"))
 
     if problem := validate_tree(repo, new):

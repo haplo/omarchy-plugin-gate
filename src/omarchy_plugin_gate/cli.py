@@ -32,7 +32,8 @@ usage: omarchy-plugin-gate [options] <command> [command options] [options]
   approve <name> [--sha SHA] [--reason TEXT] [--show] [-n|--dry-run]
       One-time human approval for a candidate the gate held back. Shows the
       verdict and findings, asks why (the answer may be empty), and advances
-      gate-approved. Run update afterwards.
+      gate-approved. Run update afterwards. --show prints the patch with
+      control characters escaped.
 
   update [-p NAME]
       Apply approved commits to ~/.config/omarchy/plugins/<id> and rescan.
@@ -181,7 +182,9 @@ def dispatch(self_path: Path, argv: Sequence[str]) -> int:
             say(__version__)
             return 0
         case "_post-merge":
-            return post_merge.run(_context(self_path, lead), args[0] if args else "")
+            if len(args) != 2:
+                raise GateError("_post-merge needs a plugin name and a directory")
+            return post_merge.run(_context(self_path, lead), args[0], args[1])
         case "_complete":
             # Called on Tab: answer in plain lines, and never print a diagnostic
             # or fail the user's shell, whatever the config says.

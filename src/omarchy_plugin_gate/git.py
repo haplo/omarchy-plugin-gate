@@ -1,6 +1,7 @@
 """git, through plumbing where it exists and NUL-separated output where it does not."""
 
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -96,8 +97,8 @@ class Repo:
         env = {"GIT_ATTR_SOURCE": self.empty_tree} if no_attributes else None
         return proc.run(["git", "-C", str(self.path), *args], check=check, input=input, env=env)
 
-    def ok(self, *args: str) -> bool:
-        return self.git(*args, check=False).ok
+    def ok(self, *args: str, no_attributes: bool = False) -> bool:
+        return self.git(*args, check=False, no_attributes=no_attributes).ok
 
     def rev(self, ref: str) -> str | None:
         r = self.git("rev-parse", "--verify", "--quiet", "--end-of-options", ref, check=False)
@@ -186,6 +187,28 @@ class Repo:
         """Contents of `<sha>` or `<rev>:<path>`, or None when it does not exist."""
         r = self.git("cat-file", "blob", spec, check=False)
         return r.stdout if r.ok else None
+
+    def blob_sizes(self, shas: Iterable[str]) -> dict[str, int]:
+        """Sizes of the blobs among `shas`; anything missing or not a blob is left out."""
+        wanted = list(dict.fromkeys(shas))
+        if not wanted:
+            return {}
+        out = self.git(
+            "cat-file",
+            "--batch-check=%(objectname) %(objecttype) %(objectsize)",
+            input="".join(f"{s}\n" for s in wanted).encode(),
+        ).text
+        sizes: dict[str, int] = {}
+        for line in out.splitlines():
+            parts = line.split(" ")
+            if len(parts) == 3 and parts[1] == "blob":
+                sizes[parts[0]] = int(parts[2])
+        return sizes
+
+    def tree_paths(self, rev: str) -> list[str]:
+        """Every file in the tree of `rev`, at any depth."""
+        out = self.git("ls-tree", "-r", "-z", "--full-tree", "--name-only", rev).stdout
+        return [os.fsdecode(p) for p in out.split(b"\0") if p]
 
     def exists(self, spec: str) -> bool:
         return self.ok("cat-file", "-e", spec)

@@ -1,0 +1,26 @@
+import pytest
+
+from omarchy_plugin_gate import output
+
+
+def test_safe_text_keeps_newlines_and_tabs() -> None:
+    assert output.safe_text("a\tb\nc\n") == "a\tb\nc\n"
+
+
+@pytest.mark.parametrize(
+    ("raw", "shown"),
+    [
+        ("\x1b]52;c;ZXZpbA==\x07", "\\x1b]52;c;ZXZpbA==\\x07"),
+        ("over\rwrite", "over\\rwrite"),
+        ("\u202eevil", "\\u202eevil"),
+        ("zero\u200bwidth", "zero\\u200bwidth"),
+        ("caf\u00e9", "caf\u00e9"),
+    ],
+)
+def test_safe_text_escapes_control_characters(raw: str, shown: str) -> None:
+    assert output.safe_text(f"{raw}\n{raw}") == f"{shown}\n{shown}"
+
+
+def test_indented_escapes_each_line(capsys: pytest.CaptureFixture[str]) -> None:
+    output.indented(["one \x1b[2K", "two\ttab"], 2)
+    assert capsys.readouterr().out == "  one \\x1b[2K\n  two\\ttab\n"

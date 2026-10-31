@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Stub omarchy: logs every call; validates, lists and installs plugins just
+# enough for the gate.
+printf 'omarchy %s\n' "$*" >>"$OMARCHY_LOG"
+case "$1 $2" in
+"plugin list") printf '[]\n' ;;
+"plugin validate") jq -e '.schemaVersion == 1' "$3/manifest.json" >/dev/null 2>&1 || exit 1 ;;
+"plugin add")
+  src=$3
+  id=$(jq -r '.id' "$src/manifest.json")
+  dest="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/plugins/$id"
+  rm -rf "$dest"
+  mkdir -p "$dest"
+  cp -a "$src"/. "$dest"/
+  ;;
+*) exit 0 ;;
+esac

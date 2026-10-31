@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from omarchy_plugin_gate import __version__, cli
+from omarchy_plugin_gate.commands import doctor
 from omarchy_plugin_gate.commands.add import clone_name
 from omarchy_plugin_gate.commands.status import plugin_state
 from omarchy_plugin_gate.config import Config, Overrides
@@ -86,7 +87,7 @@ def seen_config(monkeypatch: pytest.MonkeyPatch) -> list[Config]:
         ["--root", "/r", "--model=m", "status", "-p", "demo"],
         ["status", "--root=/r", "-p", "demo", "--model", "m"],
         ["--root", "/r", "status", "--model", "m", "-p", "demo"],
-        ["--root", "/r", "--model", "m", "_post-merge", "/x"],
+        ["--root", "/r", "--model", "m", "_post-merge", "demo", "/x"],
         ["approve", "demo", "--reason", "--root", "/r", "--model", "m"],
     ],
 )
@@ -233,22 +234,37 @@ def test_hook_quotes_paths_and_names(tmp_path: Path) -> None:
         {"HOME": str(tmp_path), "OMARCHY_PLUGIN_GATE_STATE": str(tmp_path / "st ate")},
         tmp_path / "my repo" / "bin" / "omarchy-plugin-gate",
     )
-    text = hook_text(cfg, "evil\nrm -rf ~")
-    assert "\nrm -rf" not in text
+    text = hook_text(cfg, "it's; rm -rf ~")
     assert (
-        f"exec '{cfg.self_path}' --root {cfg.root} --state '{cfg.state_root}' _post-merge" in text
+        f"exec '{cfg.self_path}' --root {cfg.root} --state '{cfg.state_root}' "
+        "_post-merge 'it'\"'\"'s; rm -rf ~' \"$top\"" in text
     )
     assert f">>'{tmp_path / 'st ate' / 'hooks.log'}' 2>&1" in text
     r = subprocess.run(["bash", "-n"], input=text, text=True, capture_output=True, check=False)
     assert r.returncode == 0, r.stderr
 
 
+def test_hook_names_its_plugin(cfg: Config) -> None:
+    assert '_post-merge demo "$top" >>' in hook_text(cfg, "demo")
+
+
+def test_no_hook_for_an_unprintable_name(cfg: Config, upstream: Upstream) -> None:
+    assert not install_hook(cfg, upstream.path, "evil\nrm -rf ~")
+    assert not (upstream.path / ".git" / "hooks" / "post-merge").exists()
+
+
 def test_hook_install_and_detection(cfg: Config, upstream: Upstream) -> None:
-    assert not hook_ok(cfg, upstream.path)
+    assert not hook_ok(cfg, upstream.path, "demo")
     assert install_hook(cfg, upstream.path, "demo")
     hook = upstream.path / ".git" / "hooks" / "post-merge"
     assert hook.stat().st_mode & 0o111
-    assert hook_ok(cfg, upstream.path)
+    assert hook_ok(cfg, upstream.path, "demo")
+
+
+@pytest.mark.parametrize("other", ["dem", "demo2", "other"])
+def test_hook_for_another_plugin_is_stale(cfg: Config, upstream: Upstream, other: str) -> None:
+    assert install_hook(cfg, upstream.path, "demo")
+    assert not hook_ok(cfg, upstream.path, other)
 
 
 @pytest.mark.parametrize("override", [Overrides(root="/elsewhere"), Overrides(state="/elsewhere")])
@@ -262,7 +278,7 @@ def test_hook_with_other_paths_is_stale(
         "OMARCHY_PLUGIN_GATE_STATE": str(cfg.state_root),
     }
     other = Config.from_env(env, cfg.self_path, override)
-    assert not hook_ok(other, upstream.path)
+    assert not hook_ok(other, upstream.path, "demo")
 
 
 def test_hooks_without_paths_are_stale(cfg: Config, upstream: Upstream) -> None:
@@ -272,4 +288,42 @@ def test_hooks_without_paths_are_stale(cfg: Config, upstream: Upstream) -> None:
         "top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n"
         f'exec "{cfg.self_path}" _post-merge "$top" >>"{cfg.state_root}/hooks.log" 2>&1\n'
     )
-    assert not hook_ok(cfg, upstream.path)
+    assert not hook_ok(cfg, upstream.path, "demo")
+
+
+def test_hooks_without_a_plugin_name_are_stale(cfg: Config, upstream: Upstream) -> None:
+    # The format written before hooks named their plugin.
+    hook = upstream.path / ".git" / "hooks" / "post-merge"
+    hook.write_text(
+        "#!/usr/bin/env bash\n"
+        "top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)\n"
+        f"exec {cfg.self_path} --root {cfg.root} --state {cfg.state_root} _post-merge "
+        f'"$top" >>{cfg.state_root}/hooks.log 2>&1\n'
+    )
+    assert not hook_ok(cfg, upstream.path, "demo")
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_doctor_reports_omarchy(
+    ctx: Context,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    present: bool,
+) -> None:
+    ctx.cfg.root.mkdir(parents=True)
+    monkeypatch.setattr(
+        doctor.proc,
+        "which",
+        lambda name: None if name == "omarchy" and not present else f"/stub/{name}",
+    )
+    doctor.run(ctx, "", fix=False)
+    out = capsys.readouterr().out
+    if present:
+        assert "omarchy: /stub/omarchy" in out
+    else:
+        assert "omarchy is not on PATH; every candidate fails validation" in out
+
+
+def test_post_merge_needs_a_name_and_a_directory(capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(LAUNCHER, ["--root", "/r", "_post-merge", "/x"]) == 1
+    assert "_post-merge needs a plugin name and a directory" in capsys.readouterr().err

@@ -70,7 +70,7 @@ def doctor_one(ctx: Context, name: str, fix: bool) -> bool:
     if idir is not None and installed:
         targets.append(("the installed copy", idir))
     for label, directory in targets:
-        if hook_ok(ctx.cfg, directory):
+        if hook_ok(ctx.cfg, directory, name):
             ok(f"tripwire in {label}")
         elif fix:
             if install_hook(ctx.cfg, directory, name):
@@ -100,6 +100,12 @@ def run(ctx: Context, want: str, fix: bool) -> int:
         failures += 1
     else:
         ok(f"opencode: {opencode}")
+    omarchy = proc.which("omarchy")
+    if omarchy is None:
+        bad("omarchy is not on PATH; every candidate fails validation")
+        failures += 1
+    else:
+        ok(f"omarchy: {omarchy}")
     if cfg.model:
         models = proc.run(["opencode", "models"], check=False).text.splitlines()
         if cfg.model in models:

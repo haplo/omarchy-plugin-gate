@@ -11,7 +11,8 @@ that passed.
 
 ## Requirements
 
-- Omarchy with the `omarchy` command
+- Omarchy with the `omarchy` command on `PATH` (every candidate is validated
+  with `omarchy plugin validate`)
 - `python3` 3.14 or newer (Omarchy's system Python) and `git`; the gate uses the
   standard library only, so there is nothing to `pip install`
 - [OpenCode](https://opencode.ai) on `PATH` (the reviewer runs headlessly)
@@ -134,8 +135,29 @@ held                             the last commit that failed and why
   full
 - diffs that are not valid UTF-8, which OpenCode would not hand to the reviewer
   as text; the offending files are named
+- files git treats as binary (a single NUL byte is enough) that the reviewer
+  would see only as "Binary files differ" although they are code: a code
+  suffix (`.qml`, `.js`, `.sh`, `.py`, `.json`, `.desktop`, …) or a `qmldir`,
+  an entry point, or an executable
+- native code: an ELF file under any name, or a `.so`, `.node`, `.dll` or
+  `.dylib`
+- a `.gitattributes` anywhere in the candidate tree that sets a `filter` (Git
+  LFS sets `filter=lfs`), a `.lfsconfig`, or a changed file that is an LFS
+  pointer. The patch shows the committed blob, but a checkout runs whatever
+  filter is configured on your machine (`git lfs install` sets one up
+  globally), so the files on disk would not be the ones reviewed. The gate's
+  own merges and resets ignore the plugin's attributes as well
+- symlinks, submodules and `.gitmodules`: the patch shows a symlink only as
+  its target path and a submodule only as `Subproject commit <sha>`, so the
+  reviewer never sees what they point at
 - a manifest `id` change, or a manifest that can no longer be read
+- a manifest `id` that is not a valid plugin id: letters, digits, `.`, `_` and
+  `-`, starting with a letter or digit, no `..`, and not in the reserved
+  `omarchy.*` namespace. The gate checks this itself, since the id names the
+  installed copy's directory
 - `manifest.json` that does not validate at the candidate commit
+  (`omarchy plugin validate`). Without `omarchy` on `PATH` nothing can be
+  validated, so every candidate fails; `doctor` reports a missing `omarchy`
 - entry points that escape the plugin directory or name a file missing from the
   candidate commit
 - more than 40 structural findings in one candidate
@@ -144,7 +166,10 @@ held                             the last commit that failed and why
 are numbered `F1`, `F2`, …, printed one per line before the review starts, and
 handed to the reviewer with the patch:
 
-- binary files outside common asset types
+- binary files outside common asset types (PNG, JPEG, GIF, WebP, ICO, AVIF,
+  BMP, WOFF, WOFF2, TTF)
+- asset files whose contents do not start the way their type does, such as a
+  `.png` that is not a PNG image
 - `.git/`, `.ssh/`, `authorized_keys`, `sudoers`, `systemd/`, `omarchy/hooks`,
   `*.service`, `*.timer`, `*.socket`, `*.path`, `*.desktop`, `*.pem`, `*.key`,
   `*.p12`
@@ -176,6 +201,10 @@ followed by its finding answers and one reason per line. It never runs from the
 plugin checkout, so a hostile `.opencode/` configuration in the diff cannot
 execute. Reviewer crash, timeout, or a missing verdict line all fail closed.
 
+The prompt also lists the commit subjects, authors and changed files. The
+plugin's author wrote those, so they sit in a block marked as untrusted data,
+with control characters escaped and each line cut to 200 characters.
+
 The copy of the patch the reviewer gets (`patch.review`) ends with a line
 carrying a random code word, generated for each run and never put in the prompt.
 The reviewer must finish its answer with `SEEN <word>`. Without the right word
@@ -192,6 +221,13 @@ patch path, then asks for a reason. The reason may be empty; `--reason TEXT`
 skips the prompt, which is also required when stdin is not a terminal. With
 `--show` it prints the patch before asking, and `-n` / `--dry-run` shows the
 decision without changing anything.
+
+Everything printed from the plugin or the reviewer has its control characters
+escaped: the patch under `--show`, and the verdict, findings and held reasons
+in `approve`, `status` and `add`. An escape sequence in a hostile patch shows
+up as `\x1b…` instead of erasing lines or writing to your clipboard. The
+reviewer's answer is cleaned the same way before it is stored in `verdict`,
+`cleared` and `held`; `review.txt` keeps its raw output.
 
 ```sh
 omarchy-plugin-gate approve my-plugin          # prompt for a reason
@@ -221,6 +257,12 @@ them before you answer.
 copy. If a merge did not come through the gate (a manual `git pull`, say), the
 hook reviews the incoming commits and, on failure, resets them and disables the
 plugin. Commits you authored yourself are never reviewed or rolled back.
+
+Each hook names its plugin, and the installed copy is recognised by the id in
+the approved commit, so a merge cannot hide from the hook by changing the
+manifest id. Hooks written by earlier releases did not name their plugin;
+`check`, `approve` and `update` rewrite them, and `doctor --fix` does too.
+Until then, such a hook only logs an error to `hooks.log`.
 
 This is a net, not the main gate: `omarchy-shell` may already have rescanned by
 the time a hook finishes. The gate is what prevents bad code from arriving.
@@ -267,7 +309,7 @@ reads the same file.
 Tripwire hooks record the root and state of the run that installed them, so a
 merge reviewed by the hook uses the same clones and evidence directory whatever
 the environment of the `git pull`. `check`, `approve` and `update` rewrite
-hooks that record a different root or state; `doctor` reports them and
+hooks that record a different root, state or plugin; `doctor` reports them and
 `doctor --fix` rewrites them.
 
 Re-run `mise run install` after pulling a change to the reviewer agent;
@@ -306,7 +348,7 @@ mise run test     # unit tests and the fixture suite
 ```sh
 mise run test     # both suites
 mise run test:unit
-mise run test:fixture   # or: tests/run
+mise run test:fixture   # or: tests/run [--keep] [suite ...]
 ```
 
 The unit tests (pytest) cover the pure pieces in isolation: path, danger and
@@ -318,8 +360,10 @@ crashes after `REVIEW PASS`, a reviewer that times out and leaves children
 behind).
 
 The fixture suite (`tests/run`, bash, needs `jq`) is the end-to-end contract.
-It builds throwaway repositories in a temporary directory, uses a stub
-reviewer and stub `omarchy` commands, and covers the bootstrap review, clean and
+Each suite in `tests/suites/` runs against its own throwaway repositories in a
+temporary directory, with a stub reviewer and stub `omarchy` commands from
+`tests/stubs/`; name suites to run only those (`tests/run approve hooks`). It
+covers the bootstrap review, clean and
 partial updates, every hard structural failure (asserting the model is *not*
 called), every kind of structural finding reaching the reviewer, each way a
 reviewer can fail to clear a finding, a missing, wrong or planted code word,

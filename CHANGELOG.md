@@ -4,6 +4,75 @@ All notable changes to omarchy-plugin-gate. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- A hostile patch or reviewer answer could send escape sequences to the
+  terminal. `approve --show` wrote the patch bytes as they were, so a plugin
+  could erase or hide lines of the diff being waived, or set the clipboard
+  through OSC 52. The reviewer's output was stripped of colour codes only, so
+  other sequences, carriage returns and bidi controls reached `verdict`,
+  `cleared` and `held`, and from there `status`, `approve` and `add`. `--show`
+  now prints the patch with control characters escaped (`\x1b…`), keeping
+  newlines and tabs; the verdict, findings and held reasons are escaped
+  wherever they are printed; and the reviewer's answer is cleaned of every
+  escape sequence and control character before anything is stored.
+  `review.txt` still holds the raw output.
+- Code could be hidden from the reviewer as a binary file. git treats a file
+  with one NUL byte in its first 8000 bytes as binary, so a `.js` or `.qml`
+  carrying one reached the reviewer as "Binary files differ" and only a
+  clearable finding; and a file with an asset suffix was never flagged at all,
+  so a native library named `icon.png` passed silently. Now a binary file is a
+  hard failure when it has a code suffix (`.qml`, `.js`, `.sh`, `.py`,
+  `.json`, `.desktop` and the like) or is a `qmldir`, is an entry point, is
+  executable, is ELF under any name, or is a `.so`, `.node`, `.dll` or
+  `.dylib`. An image or font whose contents do not start the way its type
+  does is a new finding, `asset file does not look like its type`. Other
+  binaries stay a finding, and a deleted binary is no longer reported. The
+  `plugin-reviewer` agent mentions the new finding; re-run `mise run install`.
+- Git LFS and other filter drivers could put unreviewed content on disk. The
+  reviewer sees the committed blob, which for an LFS-tracked file is a
+  three-line pointer, but every checkout (`omarchy plugin add` and `update`,
+  and the gate's own merges and resets) reads the plugin's `.gitattributes`
+  and, with `git lfs install` or any other filter configured on the machine,
+  writes whatever the filter returns. A `.gitattributes` anywhere in the
+  candidate tree that sets a `filter`, a `.lfsconfig`, or a changed file that
+  is an LFS pointer is now a hard failure. The gate's own merges and resets
+  also ignore the plugin's attributes, so not even a waived commit runs a
+  filter there.
+- The tripwire skipped a pull into the installed copy that changed the
+  manifest id. It worked out which plugin a directory belonged to from the
+  `manifest.json` left by the merge, so a commit with a new id was never
+  reviewed or rolled back. Hooks now name their plugin, and the installed copy
+  is recognised, and disabled on a rollback, by the id in the approved commit.
+  `update` also takes the id from the approved commit when it rolls back.
+  Hooks written by earlier releases are rewritten by the next `check`,
+  `approve`, `update` or `doctor --fix`; until then they only log an error.
+- Commit metadata reached the reviewer as part of its instructions. The
+  headline commit, the commit list (abbreviated hash, author, subject) and the
+  changed-file list went into the prompt as they were, so a subject or author
+  name could carry escape sequences, bidi controls, carriage returns or long
+  instructions. They now sit in a block marked as written by the plugin
+  author and untrusted, with control characters escaped, the block's `<<<` and
+  `>>>` markers broken up, and each line cut to 200 characters. The plugin
+  name and id are escaped and bounded the same way.
+- Validation was skipped when `omarchy` was not on `PATH`, and the gate never
+  checked the manifest id itself. `omarchy plugin validate` was the only check
+  that refused symlinks and bad ids, so without it a candidate passed with
+  neither checked. A missing `omarchy` now fails the candidate, and `doctor`
+  reports it. The gate also refuses a manifest id that is not a valid plugin
+  id (letters, digits, `.`, `_` and `-`, starting with a letter or digit, no
+  `..`, not `omarchy.*`), the same rule `omarchy plugin validate` applies, and
+  never builds a path from such an id: before, an id such as `/etc` made the
+  installed copy's directory `/etc`.
+- Symlinks and submodules were not checked by the gate. The patch shows a
+  symlink only as its target path and a submodule only as `Subproject commit
+  <sha>`, so the reviewer never saw what they pointed at; symlinks were refused
+  only when `omarchy plugin validate` ran, and submodules not at all. An added
+  or changed symlink, a submodule, or a `.gitmodules` file is now a hard
+  failure.
+
 ## [0.4.0] - 2026-10-29
 
 ### Added
@@ -233,6 +302,7 @@ Initial release.
 - A nightly systemd user timer for `check`, desktop notifications, mise tasks,
   install and uninstall scripts, and a fixture test suite.
 
+[Unreleased]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.1.0...v0.2.0

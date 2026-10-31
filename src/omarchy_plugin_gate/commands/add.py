@@ -11,7 +11,7 @@ from ..context import Context
 from ..hooks import ensure_hooks
 from ..install import echo, install_new
 from ..notify import notify
-from ..output import GateError, info, say
+from ..output import GateError, indented, info, say
 from ..review import review
 
 
@@ -93,8 +93,7 @@ def run(ctx: Context, args: AddArgs) -> int:
         notify(ctx, f"{plugin_id}: review failed", "Nothing was installed. Open status to see why.")
         say()
         say("Held back. Reasons:")
-        for line in rd.verdict_lines()[1:]:
-            say(f"  {line}")
+        indented(rd.verdict_lines()[1:], 2)
         info(f"patch: {rd.patch}")
         info(
             f"after reading it, to install anyway: omarchy-plugin-gate approve {name} "

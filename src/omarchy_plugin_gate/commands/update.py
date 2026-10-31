@@ -8,7 +8,7 @@ from ..hooks import ensure_hooks
 from ..install import install_new
 from ..notify import notify, notify_close
 from ..output import info, say, warn
-from ..plugins import selected_names
+from ..plugins import approved_manifest_id, selected_names
 from . import disable_plugin, installed_sha
 
 
@@ -18,8 +18,8 @@ def _detail(result: proc.Result) -> str:
 
 def _roll_back(ctx: Context, name: str, installed: Repo, before: str | None) -> None:
     if before:
-        installed.ok("reset", "--hard", "--quiet", before)
-    disable_plugin(ctx.manifest_id(name))
+        installed.ok("reset", "--hard", "--quiet", before, no_attributes=True)
+    disable_plugin(approved_manifest_id(ctx.clone(name)))
 
 
 def update_one(ctx: Context, name: str, *, first_install: bool) -> bool:
@@ -63,7 +63,9 @@ def update_one(ctx: Context, name: str, *, first_install: bool) -> bool:
         return False
 
     say(f"{name}: installing {approved[:12]}")
-    merged = installed.git("merge", "--ff-only", "--quiet", new, check=False)
+    # No attributes: a filter driver configured on this machine must not
+    # rewrite the reviewed files on their way to disk.
+    merged = installed.git("merge", "--ff-only", "--quiet", new, check=False, no_attributes=True)
     if not merged.ok:
         warn(f"{name}: cannot fast-forward (local changes in {idir}){_detail(merged)}")
         return False

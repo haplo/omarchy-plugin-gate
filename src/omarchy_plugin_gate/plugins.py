@@ -5,8 +5,10 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .config import Config
+from .config import APPROVED_REF, Config
+from .git import Repo
 from .output import GateError
+from .patterns import valid_plugin_id
 
 
 def parse_manifest(data: bytes | None) -> dict[str, Any] | None:
@@ -28,8 +30,10 @@ def read_manifest(path: Path) -> dict[str, Any] | None:
 
 
 def manifest_id_of(manifest: dict[str, Any] | None) -> str:
+    """The manifest's id, or "" when there is none or it is not a valid plugin
+    id; paths are built from it, so `../x` or `/etc` must never come back."""
     value = manifest.get("id") if manifest else None
-    return value if isinstance(value, str) else ""
+    return value if isinstance(value, str) and valid_plugin_id(value) else ""
 
 
 def plugin_names(cfg: Config) -> list[str]:
@@ -68,6 +72,12 @@ def selected_names(cfg: Config, want: str) -> list[str]:
     return found
 
 
+def approved_manifest_id(clone: Repo) -> str:
+    """The id in the approved commit's manifest. Unlike the working tree, which
+    a merge outside the gate may have rewritten, this is reviewed content."""
+    return manifest_id_of(parse_manifest(clone.blob(f"{APPROVED_REF}:manifest.json")))
+
+
 def same_path(a: str | Path, b: str | Path, base: Path | None = None) -> bool:
     """Do two paths name the same file? A relative `a` is taken from `base`."""
     if not a or not b:
@@ -78,18 +88,3 @@ def same_path(a: str | Path, b: str | Path, base: Path | None = None) -> bool:
             return False
         pa = base / pa
     return os.path.realpath(pa) == os.path.realpath(b)
-
-
-def plugin_for_dir(cfg: Config, directory: Path) -> str | None:
-    """The plugin a clone or installed copy belongs to."""
-    names = plugin_names(cfg)
-    for name in names:
-        if same_path(clone_dir(cfg, name), directory):
-            return name
-    pid = manifest_id_of(read_manifest(directory / "manifest.json"))
-    if not pid:
-        return None
-    for name in names:
-        if manifest_id(cfg, name) == pid:
-            return name
-    return None
