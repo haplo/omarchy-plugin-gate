@@ -52,8 +52,14 @@ file is for changing the code.
 - `systemd/` — nightly `check` service and timer. `%h` paths are rewritten by
   `install.sh`.
 - `tests/run` — fixture suite (bash, needs `jq`), the end-to-end contract.
-  Builds throwaway upstreams, clones, a stub `opencode`, and stub `omarchy`
-  commands. No network, no real model, no real plugin install.
+  Runs each `tests/suites/<name>.sh` in its own subshell against a fresh
+  fixture under `<tmp>/<name>/`: throwaway upstreams and clones built from
+  `tests/plugin/`, and the stubs in `tests/stubs/` (`opencode`, `omarchy` and
+  friends) first on `PATH`. Helpers live in `tests/lib/`: `assert.sh` (`eq`,
+  `has`, `assert`, `refute`), `fixture.sh` (`setup_env`, `make_upstream`,
+  `demo_clone`, `demo_approved`, `install_copy`) and `gate.sh` (`ap`, `vdir`,
+  `commit_upstream`, `case_*`). No network, no real model, no real plugin
+  install. `tests/run approve hooks` runs only those suites;
   `GATE=<path> tests/run` runs it against another build.
 - `tests/unit/` — pytest unit tests; `support.py` builds scratch git repos.
 - `pyproject.toml`, `uv.lock` — development tools (pytest, ruff, ty) and their
@@ -73,7 +79,7 @@ stock Omarchy machines. Development dependencies go in the `dev` group of
 mise run sync          # once: pytest, ruff, ty into .venv
 mise run test          # unit tests + fixture suite
 mise run test:unit     # uv run pytest
-mise run test:fixture  # tests/run; tests/run --keep keeps the fixture
+mise run test:fixture  # tests/run [--keep] [suite ...]; --keep keeps the fixture
 mise run lint          # ruff format --check, ruff check, ty check, shell syntax
 mise run fmt           # ruff format + safe fixes
 ```
@@ -82,10 +88,16 @@ There is no build step. `mise run install` mutates the developer's actual
 config, timer, and hooks — do not run it to verify a change. Use the fixture
 suite instead.
 
-When a fixture test fails, the fixture is kept automatically and its path is
-printed. Each test resets upstream to the last approved commit via
-`reset_upstream`, so new cases should follow the existing
-`case_hard`/`case_finding`/`case_uncleared` and `commit_upstream` patterns.
+When a fixture test fails, the fixture is kept automatically, its path is
+printed, and the failed checks are listed with their suite. Suites never share
+state: each starts from `demo_clone` (unreviewed), `demo_approved` (initial
+import approved) or nothing, adds `install_copy` when it needs the installed
+copy, and may change exports and the private git config freely. Put a new
+check in the suite it belongs to, or add a suite file — the runner picks up
+every `tests/suites/*.sh`. Within a suite, cases reset upstream to the last
+approved commit via `reset_upstream`, so new cases should follow the existing
+`case_hard`/`case_finding`/`case_uncleared` and `commit_upstream` patterns, and
+use `assert`/`refute` rather than `[[ … ]] && ok … || no …`.
 
 Unit tests must never reach a real `opencode` or `omarchy`: put a stub first on
 `PATH` or monkeypatch the call. `/usr/bin/opencode` may exist on the machine.
@@ -180,9 +192,10 @@ Unit tests must never reach a real `opencode` or `omarchy`: put a stub first on
 - User-facing output goes through `output.say`, `info`, `ok`, `bad`, `warn` and
   `indented`; failures raise `GateError`, which prints
   `omarchy-plugin-gate: <message>` to stderr and exits 1.
-- Shell (`scripts/`, `tests/run`, the hook text) stays bash with
+- Shell (`scripts/`, `tests/`, the hook text) stays bash with
   `set -euo pipefail` and two-space indent. `tests/run` intentionally uses
-  `set -uo pipefail` (without `-e`) because it inspects non-zero exits.
+  `set -uo pipefail` (without `-e`) because it inspects non-zero exits; the
+  files in `tests/lib/` and `tests/suites/` are sourced by it and inherit that.
 - A new setting is a field on `config.Overrides`, which gives it the option
   `--<name>`, the variable `OMARCHY_PLUGIN_GATE_<NAME>` and the config file key
   `<name>` (dashes, like the option); the option wins over the variable, which

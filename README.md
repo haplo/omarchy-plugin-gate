@@ -348,7 +348,7 @@ mise run test     # unit tests and the fixture suite
 ```sh
 mise run test     # both suites
 mise run test:unit
-mise run test:fixture   # or: tests/run
+mise run test:fixture   # or: tests/run [--keep] [suite ...]
 ```
 
 The unit tests (pytest) cover the pure pieces in isolation: path, danger and
@@ -360,8 +360,10 @@ crashes after `REVIEW PASS`, a reviewer that times out and leaves children
 behind).
 
 The fixture suite (`tests/run`, bash, needs `jq`) is the end-to-end contract.
-It builds throwaway repositories in a temporary directory, uses a stub
-reviewer and stub `omarchy` commands, and covers the bootstrap review, clean and
+Each suite in `tests/suites/` runs against its own throwaway repositories in a
+temporary directory, with a stub reviewer and stub `omarchy` commands from
+`tests/stubs/`; name suites to run only those (`tests/run approve hooks`). It
+covers the bootstrap review, clean and
 partial updates, every hard structural failure (asserting the model is *not*
 called), every kind of structural finding reaching the reviewer, each way a
 reviewer can fail to clear a finding, a missing, wrong or planted code word,

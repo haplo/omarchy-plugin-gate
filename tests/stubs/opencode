@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Stub reviewer: records its arguments, prompt and working directory, then
+# answers as the STUB_* variables say.
+printf 'stub-invoked %s\n' "$*" >>"$STUB_LOG"
+patch=""
+prev=""
+for a in "$@"; do
+  [[ $prev == "--file" ]] && patch=$a
+  prev=$a
+done
+prompt=${!#}
+printf '%s\n' "$prompt" >"$STUB_PROMPT"
+printf '%s\n' "$PWD" >"$STUB_CWD"
+# Echo the code word from the patch's last line, as a reviewer that read it all
+# would. STUB_NO_SEEN=1 leaves it out, STUB_SEEN=<word> echoes a wrong one, and
+# STUB_SEEN_FMT is the printf format for the line.
+code=$(tail -n 1 "$patch" 2>/dev/null | sed -n 's/^omarchy-plugin-gate: end of patch, code word //p')
+verdict="${STUB_VERDICT:-PASS}"
+if [[ -n ${STUB_FAIL_ON:-} && -f $patch ]] && grep -q -- "$STUB_FAIL_ON" "$patch"; then
+  verdict=FAIL
+fi
+printf 'REVIEW %s\n' "$verdict"
+# Answer the numbered findings: STUB_CLEAR=all|none|F1,F2 and STUB_CONFIRM=F1,F2.
+# STUB_EXTRA is printed verbatim after them.
+for f in $(printf '%s\n' "$prompt" | sed -nE 's/^  (F[0-9]+) .*/\1/p'); do
+  if [[ ,${STUB_CONFIRM:-}, == *,$f,* ]]; then
+    printf '%s CONFIRMED the stub thinks this one is real\n' "$f"
+  elif [[ ${STUB_CLEAR:-all} == all || ,${STUB_CLEAR:-}, == *,$f,* ]]; then
+    printf '%s CLEARED the stub looked and it is harmless\n' "$f"
+  fi
+done
+[[ -n ${STUB_EXTRA:-} ]] && printf '%s\n' "$STUB_EXTRA"
+if [[ $verdict == FAIL ]]; then
+  printf 'the stub reviewer disliked something in the diff\n'
+fi
+[[ -z ${STUB_NO_SEEN:-} ]] && printf -- "${STUB_SEEN_FMT:-SEEN %s}\n" "${STUB_SEEN:-$code}"
+exit "${STUB_RC:-0}"
