@@ -191,6 +191,10 @@ followed by its finding answers and one reason per line. It never runs from the
 plugin checkout, so a hostile `.opencode/` configuration in the diff cannot
 execute. Reviewer crash, timeout, or a missing verdict line all fail closed.
 
+The prompt also lists the commit subjects, authors and changed files. The
+plugin's author wrote those, so they sit in a block marked as untrusted data,
+with control characters escaped and each line cut to 200 characters.
+
 The copy of the patch the reviewer gets (`patch.review`) ends with a line
 carrying a random code word, generated for each run and never put in the prompt.
 The reviewer must finish its answer with `SEEN <word>`. Without the right word

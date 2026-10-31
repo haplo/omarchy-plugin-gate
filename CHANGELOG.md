@@ -49,6 +49,14 @@ All notable changes to omarchy-plugin-gate. The format follows
   `update` also takes the id from the approved commit when it rolls back.
   Hooks written by earlier releases are rewritten by the next `check`,
   `approve`, `update` or `doctor --fix`; until then they only log an error.
+- Commit metadata reached the reviewer as part of its instructions. The
+  headline commit, the commit list (abbreviated hash, author, subject) and the
+  changed-file list went into the prompt as they were, so a subject or author
+  name could carry escape sequences, bidi controls, carriage returns or long
+  instructions. They now sit in a block marked as written by the plugin
+  author and untrusted, with control characters escaped, the block's `<<<` and
+  `>>>` markers broken up, and each line cut to 200 characters. The plugin
+  name and id are escaped and bounded the same way.
 
 ## [0.4.0] - 2026-10-29
 
