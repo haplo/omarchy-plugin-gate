@@ -13,6 +13,30 @@ def test_clean_output_strips_ansi_and_trailing_blank_lines() -> None:
     assert reviewer.clean_output(b"") == []
 
 
+def test_clean_output_leaves_no_control_characters() -> None:
+    raw = (
+        b"REVIEW FAIL\r\n"
+        b"clipboard \x1b]52;c;ZXZpbA==\x07 osc52\n"
+        b"link \x1b]8;;https://evil.invalid\x1b\\text\x1b]8;;\x1b\\ end\n"
+        b"dcs \x1bPq#0;2;0;0;0\x1b\\ end\n"
+        b"over\rwrite \x9b2K \xc2\x9b2K lone \x1bc \xe2\x80\xaeright-to-left\n"
+    )
+    lines = reviewer.clean_output(raw)
+    assert lines[:4] == ["REVIEW FAIL", "clipboard  osc52", "link text end", "dcs  end"]
+    for line in lines:
+        assert all(c.isprintable() for c in line), line
+    assert lines[4] == "over\\rwrite \ufffd2K \\x9b2K lone c \\u202eright-to-left"
+
+
+def test_clean_output_still_decides_a_normal_answer() -> None:
+    raw = f"\x1b[1mREVIEW PASS\x1b[0m\nF1\tCLEARED it is a launcher\r\n{SEEN}\r\n".encode()
+    lines = reviewer.clean_output(raw)
+    assert lines == ["REVIEW PASS", "F1\tCLEARED it is a launcher", SEEN]
+    d = decide(lines, 0, CODE, ["thing"])
+    assert d.passed
+    assert d.cleared == ["F1 thing", "   cleared: it is a launcher"]
+
+
 def test_review_copy_ends_with_the_code_word() -> None:
     copy = reviewer.review_copy(b"diff\n", CODE)
     assert copy.endswith(f"\n{reviewer.PATCH_END_MARK} {CODE}\n".encode())

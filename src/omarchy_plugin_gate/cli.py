@@ -32,7 +32,8 @@ usage: omarchy-plugin-gate [options] <command> [command options] [options]
   approve <name> [--sha SHA] [--reason TEXT] [--show] [-n|--dry-run]
       One-time human approval for a candidate the gate held back. Shows the
       verdict and findings, asks why (the answer may be empty), and advances
-      gate-approved. Run update afterwards.
+      gate-approved. Run update afterwards. --show prints the patch with
+      control characters escaped.
 
   update [-p NAME]
       Apply approved commits to ~/.config/omarchy/plugins/<id> and rescan.

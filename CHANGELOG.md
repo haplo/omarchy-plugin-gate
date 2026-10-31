@@ -4,6 +4,22 @@ All notable changes to omarchy-plugin-gate. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- A hostile patch or reviewer answer could send escape sequences to the
+  terminal. `approve --show` wrote the patch bytes as they were, so a plugin
+  could erase or hide lines of the diff being waived, or set the clipboard
+  through OSC 52. The reviewer's output was stripped of colour codes only, so
+  other sequences, carriage returns and bidi controls reached `verdict`,
+  `cleared` and `held`, and from there `status`, `approve` and `add`. `--show`
+  now prints the patch with control characters escaped (`\x1b…`), keeping
+  newlines and tabs; the verdict, findings and held reasons are escaped
+  wherever they are printed; and the reviewer's answer is cleaned of every
+  escape sequence and control character before anything is stored.
+  `review.txt` still holds the raw output.
+
 ## [0.4.0] - 2026-10-29
 
 ### Added
@@ -233,6 +249,7 @@ Initial release.
 - A nightly systemd user timer for `check`, desktop notifications, mise tasks,
   install and uninstall scripts, and a fixture test suite.
 
+[Unreleased]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/haplo/omarchy-plugin-gate/compare/v0.1.0...v0.2.0

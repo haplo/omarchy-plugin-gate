@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 
 from . import proc
 from .config import Config
+from .output import safe_text
 from .state import ReviewDir
 
 # The copy of the patch handed to the reviewer ends with this marker and a
@@ -22,7 +23,13 @@ UNSEEN = (
     "receive or finish the whole patch (see review.txt)."
 )
 
-_ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+# Terminal escape sequences, each confined to one line: CSI, OSC (ended by BEL
+# or ST), and DCS/SOS/PM/APC (ended by ST). A lone ESC left over is dropped too.
+_ESCAPE = re.compile(
+    r"\x1b\[[0-?]*[ -/]*[@-~]"
+    r"|\x1b\][^\x07\x1b\n]*(?:\x07|\x1b\\)"
+    r"|\x1b[PX^_][^\x1b\n]*\x1b\\"
+)
 _VERDICT = re.compile(r"REVIEW (PASS|FAIL)(\s|$)")
 _ANSWER = re.compile(r"\s*(?:[-*]\s+)?F([0-9]+):?\s+(CLEARED|CONFIRMED):?\s*(.*)")
 _ID = re.compile(r"[1-9][0-9]{0,3}")
@@ -121,8 +128,11 @@ def run(cfg: Config, rd: ReviewDir, prompt: str) -> proc.Supervised:
 
 
 def clean_output(raw: bytes) -> list[str]:
-    text = _ANSI.sub("", raw.decode("utf-8", "replace")).rstrip("\n")
-    return text.split("\n") if text else []
+    """The reviewer's output as lines with no control characters left in them, so
+    the verdict, cleared and held files are safe to print."""
+    text = _ESCAPE.sub("", raw.decode("utf-8", "replace")).replace("\x1b", "")
+    text = text.replace("\r\n", "\n").rstrip("\n")
+    return safe_text(text).split("\n") if text else []
 
 
 def seen_code(lines: list[str], code: str) -> bool:

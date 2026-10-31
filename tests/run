@@ -520,6 +520,22 @@ eq 'approve: check skips the reviewer for a waiver' "$(invocations)" "$n0"
 out=$("$GATE" status -p demo 2>&1)
 has <(printf '%s' "$out") 'waived by hand' 'status reports the waiver'
 
+printf '\n== escape sequences ==\n'
+base=$(ap)
+reset_upstream "$base"
+commit_upstream 'printf "// NEEDS-HUMAN-ESC \033]52;c;ZXZpbA==\007 x\n" >> Widget.qml' 'escape me'
+STUB_FAIL_ON=NEEDS-HUMAN-ESC STUB_EXTRA=$'osc \e]52;c;ZXZpbA==\a end' \
+  "$GATE" check -p demo >/dev/null 2>&1
+eq 'escape: candidate held' "$(head -1 "$B/state/demo/held")" "$(upstream_sha)"
+eq 'escape: verdict stored without ESC' "$(grep -c $'\x1b' "$(vdir)verdict")" 0
+has "$(vdir)verdict" 'osc  end' 'escape: the reviewer line is kept'
+out=$("$GATE" approve demo --show --dry-run 2>&1)
+eq 'escape: approve --show prints no ESC' "$(grep -c $'\x1b' <<<"$out")" 0
+has <(printf '%s' "$out") '\x1b]52;c;ZXZpbA==\x07' 'escape: approve --show escapes it'
+out=$("$GATE" status -p demo 2>&1)
+eq 'escape: status prints no ESC' "$(grep -c $'\x1b' <<<"$out")" 0
+reset_upstream "$base"
+
 printf '\n== add ==\n'
 : >"$OMARCHY_LOG"
 "$GATE" add "$B/upstream.git" --dir added >/dev/null 2>&1

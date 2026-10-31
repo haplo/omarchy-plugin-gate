@@ -193,6 +193,13 @@ skips the prompt, which is also required when stdin is not a terminal. With
 `--show` it prints the patch before asking, and `-n` / `--dry-run` shows the
 decision without changing anything.
 
+Everything printed from the plugin or the reviewer has its control characters
+escaped: the patch under `--show`, and the verdict, findings and held reasons
+in `approve`, `status` and `add`. An escape sequence in a hostile patch shows
+up as `\x1b…` instead of erasing lines or writing to your clipboard. The
+reviewer's answer is cleaned the same way before it is stored in `verdict`,
+`cleared` and `held`; `review.txt` keeps its raw output.
+
 ```sh
 omarchy-plugin-gate approve my-plugin          # prompt for a reason
 omarchy-plugin-gate approve my-plugin --show   # read the diff first

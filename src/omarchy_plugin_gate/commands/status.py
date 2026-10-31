@@ -2,7 +2,7 @@
 
 from ..config import APPROVED_REF
 from ..context import Context
-from ..output import indented, info, say
+from ..output import indented, info, printable, say
 from ..plugins import selected_names
 from . import installed_sha
 
@@ -57,11 +57,11 @@ def show_one(ctx: Context, name: str) -> None:
     latest = ctx.state.latest_review_dir(name)
     verdict = latest.verdict_lines() if latest else []
     if verdict and verdict[0].startswith("REVIEW FAIL"):
-        info(f"last review: {verdict[0]}")
+        info(f"last review: {printable(verdict[0])}")
         indented(verdict[1:6])
         info(f"patch: {latest.patch if latest else ''}")
     elif verdict and verdict[0]:
-        info(f"last review: {verdict[0]}")
+        info(f"last review: {printable(verdict[0])}")
     say()
 
 
