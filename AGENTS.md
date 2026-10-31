@@ -62,7 +62,8 @@ file is for changing the code.
   `update`, `status`, `doctor`, `sync`, `test`, `lint`, `fmt`. It pins `uv`.
 
 Runtime dependencies: `python3` 3.14+ (standard library only), `git`, and
-`opencode` on `PATH`. No third-party Python packages at runtime; this runs on
+`opencode` and `omarchy` on `PATH` (without `omarchy`, validation fails
+closed). No third-party Python packages at runtime; this runs on
 stock Omarchy machines. Development dependencies go in the `dev` group of
 `pyproject.toml` and are locked in `uv.lock`.
 
@@ -113,7 +114,11 @@ Unit tests must never reach a real `opencode` or `omarchy`: put a stub first on
   hard, while other binaries and assets whose contents do not match their type
   are findings. A `filter` attribute anywhere in the tree, a `.lfsconfig`, or
   a changed LFS pointer is hard because a checkout would write something other
-  than the reviewed blob.
+  than the reviewed blob. The id must be a valid plugin id
+  (`patterns.valid_plugin_id`, checked by the gate itself), and
+  `plugins.manifest_id_of` returns `""` for anything else, so no path is ever
+  built from a bad id. `validate_tree` without `omarchy` on `PATH` is a hard
+  failure, never a skip.
 - **Every structural finding must be explicitly cleared.** Softer checks become
   numbered findings in the prompt. A `REVIEW PASS` counts only if each finding
   has exactly one `Fn CLEARED <reason>` line; missing, duplicate, `CONFIRMED`,

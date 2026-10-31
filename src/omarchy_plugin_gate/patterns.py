@@ -92,6 +92,19 @@ CODE_NAMES = ("qmldir",)
 # Native code Qt or a runtime can load (a qmldir `plugin` line, for one).
 NATIVE_SUFFIX = re.compile(r"\.(so(\.[0-9]+)*|node|dll|dylib)$", re.IGNORECASE)
 
+# A plugin id as `omarchy plugin validate` accepts it. The id names the
+# installed copy's directory, so it must never be able to name another path.
+VALID_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def valid_plugin_id(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and VALID_ID.fullmatch(value) is not None
+        and ".." not in value
+        and not value.startswith("omarchy.")
+    )
+
 
 def is_denied(path: str) -> bool:
     return DENY_PATH.search(path) is not None

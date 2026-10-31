@@ -8,6 +8,7 @@ from typing import Any
 from .config import APPROVED_REF, Config
 from .git import Repo
 from .output import GateError
+from .patterns import valid_plugin_id
 
 
 def parse_manifest(data: bytes | None) -> dict[str, Any] | None:
@@ -29,8 +30,10 @@ def read_manifest(path: Path) -> dict[str, Any] | None:
 
 
 def manifest_id_of(manifest: dict[str, Any] | None) -> str:
+    """The manifest's id, or "" when there is none or it is not a valid plugin
+    id; paths are built from it, so `../x` or `/etc` must never come back."""
     value = manifest.get("id") if manifest else None
-    return value if isinstance(value, str) else ""
+    return value if isinstance(value, str) and valid_plugin_id(value) else ""
 
 
 def plugin_names(cfg: Config) -> list[str]:

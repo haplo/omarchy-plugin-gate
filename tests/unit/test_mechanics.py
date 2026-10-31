@@ -191,6 +191,22 @@ def test_manifest_id_change_is_hard() -> None:
     assert hard == ['manifest id changed or unreadable ("a" -> none) — needs a human']
 
 
+def test_id_problem() -> None:
+    assert mechanics.id_problem({"id": "selftest.demo"}) is None
+    assert mechanics.id_problem({"id": "../x"}) == (
+        'manifest id is not a valid plugin id ("../x") — needs a human'
+    )
+    assert mechanics.id_problem({"id": "omarchy.core\n"}) == (
+        'manifest id is not a valid plugin id ("omarchy.core\\n") — needs a human'
+    )
+    assert mechanics.id_problem({"id": 7}) == (
+        "manifest id is not a valid plugin id (7) — needs a human"
+    )
+    assert mechanics.id_problem({}) == (
+        "manifest id is not a valid plugin id (missing) — needs a human"
+    )
+
+
 def test_manifest_loads_change_is_a_finding() -> None:
     hard, found = mechanics.manifest_change(
         {"id": "a", "kinds": ["bar-widget"], "entryPoints": {"barWidget": "W.qml"}},
@@ -252,7 +268,7 @@ def run_check(u: Upstream, old: str | None, new: str, limit: int = 1 << 20) -> m
 
 
 def test_clean_update_passes(upstream: Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    monkeypatch.setattr(mechanics, "validate_tree", lambda _repo, _rev: None)
     base = git(upstream.path, "rev-parse", "HEAD")
     upstream.write("Widget.qml", "import QtQuick\nItem { width: 2 }\n")
     new = upstream.commit()
@@ -262,7 +278,7 @@ def test_clean_update_passes(upstream: Upstream, monkeypatch: pytest.MonkeyPatch
 def test_initial_import_checks_the_whole_tree(
     upstream: Upstream, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    monkeypatch.setattr(mechanics, "validate_tree", lambda _repo, _rev: None)
     upstream.write("launcher.desktop", "[Desktop Entry]\n")
     new = upstream.commit()
     result = run_check(upstream, None, new)
@@ -273,7 +289,7 @@ def test_initial_import_checks_the_whole_tree(
 
 
 def test_binary_code_is_hard(upstream: Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    monkeypatch.setattr(mechanics, "validate_tree", lambda _repo, _rev: None)
     base = git(upstream.path, "rev-parse", "HEAD")
     upstream.write("lib.js", b"var a = 1; // \x00\n")
     upstream.write("Widget.qml", b"import QtQuick\n// \x00\nItem {}\n")
@@ -288,7 +304,7 @@ def test_binary_code_is_hard(upstream: Upstream, monkeypatch: pytest.MonkeyPatch
 
 
 def test_binary_entry_point_is_hard(upstream: Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    monkeypatch.setattr(mechanics, "validate_tree", lambda _repo, _rev: None)
     base = git(upstream.path, "rev-parse", "HEAD")
     upstream.manifest(entryPoints={"barWidget": "./widget.bin"})
     upstream.write("widget.bin", b"\x00\x01")
@@ -304,7 +320,7 @@ def test_filter_attributes_anywhere_in_the_tree_are_hard(
 ) -> None:
     # An attribute file added by an earlier commit still applies to a file
     # added now, so the whole candidate tree is checked, not just the diff.
-    monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    monkeypatch.setattr(mechanics, "validate_tree", lambda _repo, _rev: None)
     upstream.write("sub/.gitattributes", "*.qml filter=lfs -text\n")
     base = upstream.commit("attributes")
     upstream.write("sub/Extra.qml", "import QtQuick\nItem {}\n")
@@ -317,7 +333,7 @@ def test_filter_attributes_anywhere_in_the_tree_are_hard(
 
 
 def test_lfs_pointer_against_git(upstream: Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    monkeypatch.setattr(mechanics, "validate_tree", lambda _repo, _rev: None)
     base = git(upstream.path, "rev-parse", "HEAD")
     upstream.write(
         "Extra.qml", "version https://git-lfs.github.com/spec/v1\noid sha256:0\nsize 1\n"
@@ -334,7 +350,7 @@ def test_lfs_pointer_against_git(upstream: Upstream, monkeypatch: pytest.MonkeyP
 
 
 def test_missing_manifest_is_hard(upstream: Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    monkeypatch.setattr(mechanics, "validate_tree", lambda _repo, _rev: None)
     base = git(upstream.path, "rev-parse", "HEAD")
     upstream.write("manifest.json", "[1, 2]")
     new = upstream.commit()
@@ -343,8 +359,35 @@ def test_missing_manifest_is_hard(upstream: Upstream, monkeypatch: pytest.Monkey
     assert any("manifest.json is missing or not a JSON object" in h for h in result.hard)
 
 
-def test_too_many_findings(upstream: Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_invalid_id_is_hard_on_an_initial_import(
+    upstream: Upstream, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No old manifest to compare against, so only the id check can catch it.
+    monkeypatch.setattr(mechanics, "validate_tree", lambda _repo, _rev: None)
+    upstream.manifest(id="/etc")
+    new = upstream.commit()
+    assert run_check(upstream, None, new).hard == [
+        'manifest id is not a valid plugin id ("/etc") — needs a human'
+    ]
+
+
+def test_validation_without_omarchy_is_hard(
+    upstream: Upstream, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    base = git(upstream.path, "rev-parse", "HEAD")
+    upstream.write("Widget.qml", "import QtQuick\nItem { width: 2 }\n")
+    new = upstream.commit()
+    assert mechanics.validate_tree(upstream.repo, new) == (
+        "omarchy is not on PATH, so the candidate could not be validated — needs a human"
+    )
+    assert run_check(upstream, base, new).hard == [
+        "omarchy is not on PATH, so the candidate could not be validated — needs a human"
+    ]
+
+
+def test_too_many_findings(upstream: Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mechanics, "validate_tree", lambda _repo, _rev: None)
     base = git(upstream.path, "rev-parse", "HEAD")
     for i in range(MAX_FINDINGS + 1):
         upstream.write(f"l{i}.desktop", "x\n")

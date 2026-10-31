@@ -220,6 +220,15 @@ def manifest_change(
     return hard, found
 
 
+def id_problem(manifest: dict[str, Any]) -> str | None:
+    """The gate's own id check, so it holds whether or not `omarchy` can run."""
+    value = manifest.get("id")
+    if patterns.valid_plugin_id(value):
+        return None
+    shown = printable(_compact(value) if "id" in manifest else "missing")[:200]
+    return f"manifest id is not a valid plugin id ({shown}) — needs a human"
+
+
 def entry_point_paths(manifest: dict[str, Any] | None) -> set[str]:
     """The files the manifest's entry points name, as paths in the tree."""
     eps = manifest.get("entryPoints") if manifest is not None else None
@@ -276,7 +285,7 @@ def hints(lines: Iterable[str]) -> list[str]:
 def validate_tree(repo: Repo, rev: str) -> str | None:
     """Validate the candidate tree itself, not whatever the clone has checked out."""
     if proc.which("omarchy") is None:
-        return None
+        return "omarchy is not on PATH, so the candidate could not be validated — needs a human"
     with tempfile.TemporaryDirectory(prefix="omarchy-plugin-gate.") as tmp:
         try:
             with tarfile.open(fileobj=io.BytesIO(repo.archive(rev)), mode="r:") as tar:
@@ -339,6 +348,8 @@ def check(
             "manifest.json is missing or not a JSON object at this revision — needs a human"
         )
     else:
+        if problem := id_problem(new_manifest):
+            result.hard.append(problem)
         result.hard += entry_point_problems(new_manifest, lambda p: repo.exists(f"{new}:{p}"))
 
     if problem := validate_tree(repo, new):

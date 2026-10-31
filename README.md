@@ -11,7 +11,8 @@ that passed.
 
 ## Requirements
 
-- Omarchy with the `omarchy` command
+- Omarchy with the `omarchy` command on `PATH` (every candidate is validated
+  with `omarchy plugin validate`)
 - `python3` 3.14 or newer (Omarchy's system Python) and `git`; the gate uses the
   standard library only, so there is nothing to `pip install`
 - [OpenCode](https://opencode.ai) on `PATH` (the reviewer runs headlessly)
@@ -147,7 +148,13 @@ held                             the last commit that failed and why
   globally), so the files on disk would not be the ones reviewed. The gate's
   own merges and resets ignore the plugin's attributes as well
 - a manifest `id` change, or a manifest that can no longer be read
+- a manifest `id` that is not a valid plugin id: letters, digits, `.`, `_` and
+  `-`, starting with a letter or digit, no `..`, and not in the reserved
+  `omarchy.*` namespace. The gate checks this itself, since the id names the
+  installed copy's directory
 - `manifest.json` that does not validate at the candidate commit
+  (`omarchy plugin validate`). Without `omarchy` on `PATH` nothing can be
+  validated, so every candidate fails; `doctor` reports a missing `omarchy`
 - entry points that escape the plugin directory or name a file missing from the
   candidate commit
 - more than 40 structural findings in one candidate

@@ -288,6 +288,8 @@ has "$(vdir)hints.txt" subprocess 'hint collected'
 printf '\n== hard structural failures (no model call) ==\n'
 case_hard 'oversized-patch' 'printf "// a line long enough to cross a tiny limit\n" >> Widget.qml' 'byte review limit' OMARCHY_PLUGIN_GATE_MAX_PATCH=64
 case_hard 'manifest-id' 'jq ".id = \"selftest.other\"" manifest.json > m && mv m manifest.json' 'manifest id changed'
+case_hard 'bad-id' 'jq ".id = \"../x\"" manifest.json > m && mv m manifest.json' 'manifest id is not a valid plugin id ("../x")'
+has "$(vdir)verdict" 'manifest id changed' 'bad-id: id change reported too'
 case_hard 'entrypoint-missing' 'jq ".entryPoints.extra = \"Missing.qml\"" manifest.json > m && mv m manifest.json' 'missing file'
 case_hard 'entrypoint-escape' 'jq ".entryPoints.extra = \"../outside.qml\"" manifest.json > m && mv m manifest.json' 'escape the plugin directory'
 case_hard 'invalid-manifest' 'jq ".schemaVersion = 99" manifest.json > m && mv m manifest.json' 'does not validate'

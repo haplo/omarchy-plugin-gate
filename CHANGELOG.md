@@ -57,6 +57,15 @@ All notable changes to omarchy-plugin-gate. The format follows
   author and untrusted, with control characters escaped, the block's `<<<` and
   `>>>` markers broken up, and each line cut to 200 characters. The plugin
   name and id are escaped and bounded the same way.
+- Validation was skipped when `omarchy` was not on `PATH`, and the gate never
+  checked the manifest id itself. `omarchy plugin validate` was the only check
+  that refused symlinks and bad ids, so without it a candidate passed with
+  neither checked. A missing `omarchy` now fails the candidate, and `doctor`
+  reports it. The gate also refuses a manifest id that is not a valid plugin
+  id (letters, digits, `.`, `_` and `-`, starting with a letter or digit, no
+  `..`, not `omarchy.*`), the same rule `omarchy plugin validate` applies, and
+  never builds a path from such an id: before, an id such as `/etc` made the
+  installed copy's directory `/etc`.
 
 ## [0.4.0] - 2026-10-29
 

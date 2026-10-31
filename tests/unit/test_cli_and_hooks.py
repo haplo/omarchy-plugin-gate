@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from omarchy_plugin_gate import __version__, cli
+from omarchy_plugin_gate.commands import doctor
 from omarchy_plugin_gate.commands.add import clone_name
 from omarchy_plugin_gate.commands.status import plugin_state
 from omarchy_plugin_gate.config import Config, Overrides
@@ -300,6 +301,27 @@ def test_hooks_without_a_plugin_name_are_stale(cfg: Config, upstream: Upstream) 
         f'"$top" >>{cfg.state_root}/hooks.log 2>&1\n'
     )
     assert not hook_ok(cfg, upstream.path, "demo")
+
+
+@pytest.mark.parametrize("present", [True, False])
+def test_doctor_reports_omarchy(
+    ctx: Context,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    present: bool,
+) -> None:
+    ctx.cfg.root.mkdir(parents=True)
+    monkeypatch.setattr(
+        doctor.proc,
+        "which",
+        lambda name: None if name == "omarchy" and not present else f"/stub/{name}",
+    )
+    doctor.run(ctx, "", fix=False)
+    out = capsys.readouterr().out
+    if present:
+        assert "omarchy: /stub/omarchy" in out
+    else:
+        assert "omarchy is not on PATH; every candidate fails validation" in out
 
 
 def test_post_merge_needs_a_name_and_a_directory(capsys: pytest.CaptureFixture[str]) -> None:

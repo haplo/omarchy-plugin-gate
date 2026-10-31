@@ -176,3 +176,30 @@ def test_asset_mismatches(path: str, head: bytes) -> None:
 )
 def test_entry_point_escape(ep: str, escapes: bool) -> None:
     assert patterns.escapes_plugin(ep) is escapes
+
+
+@pytest.mark.parametrize(
+    ("value", "valid"),
+    [
+        ("selftest.demo", True),
+        ("my-plugin_2", True),
+        ("A", True),
+        ("omarchyish.x", True),
+        ("", False),
+        ("../x", False),
+        ("a..b", False),
+        ("/etc", False),
+        ("sub/dir", False),
+        (".hidden", False),
+        ("-flag", False),
+        ("omarchy.core", False),
+        ("demo\n", False),
+        ("caf\u00e9", False),
+        ("with space", False),
+        (None, False),
+        (7, False),
+        (["selftest.demo"], False),
+    ],
+)
+def test_valid_plugin_id(value: object, valid: bool) -> None:
+    assert patterns.valid_plugin_id(value) is valid

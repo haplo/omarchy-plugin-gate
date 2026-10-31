@@ -1,4 +1,5 @@
-"""The tripwire works out its plugin from the hook, never from the merged files."""
+"""How the tripwire finds its plugin: from the hook and the approved commit,
+never from the merged files, and never through an invalid id."""
 
 from pathlib import Path
 
@@ -7,7 +8,7 @@ import pytest
 from omarchy_plugin_gate.commands import post_merge
 from omarchy_plugin_gate.config import APPROVED_REF
 from omarchy_plugin_gate.context import Context
-from omarchy_plugin_gate.plugins import approved_manifest_id
+from omarchy_plugin_gate.plugins import approved_manifest_id, manifest_id_of
 from support import Upstream, git
 
 
@@ -52,6 +53,20 @@ def test_approved_manifest_id_ignores_the_working_tree(ctx: Context, upstream: U
     git(clone, "update-ref", APPROVED_REF, "HEAD")
     (clone / "manifest.json").write_text('{"id": "selftest.other"}')
     assert approved_manifest_id(ctx.clone("demo")) == "selftest.demo"
+
+
+@pytest.mark.parametrize("bad", ["../x", "/etc", "omarchy.core", "a/b", ""])
+def test_no_path_is_built_from_an_invalid_id(ctx: Context, upstream: Upstream, bad: str) -> None:
+    assert manifest_id_of({"id": bad}) == ""
+    ctx.cfg.root.mkdir(parents=True)
+    clone = ctx.clone_dir("demo")
+    upstream.manifest(id=bad)
+    upstream.commit()
+    git(clone.parent, "clone", "-q", str(upstream.path), str(clone))
+    git(clone, "update-ref", APPROVED_REF, "HEAD")
+    assert approved_manifest_id(ctx.clone("demo")) == ""
+    assert ctx.manifest_id("demo") == ""
+    assert ctx.installed_dir("demo") is None
 
 
 def test_installed_copy_that_changes_its_id_is_reviewed_and_rolled_back(
