@@ -66,6 +66,12 @@ All notable changes to omarchy-plugin-gate. The format follows
   `..`, not `omarchy.*`), the same rule `omarchy plugin validate` applies, and
   never builds a path from such an id: before, an id such as `/etc` made the
   installed copy's directory `/etc`.
+- Symlinks and submodules were not checked by the gate. The patch shows a
+  symlink only as its target path and a submodule only as `Subproject commit
+  <sha>`, so the reviewer never saw what they pointed at; symlinks were refused
+  only when `omarchy plugin validate` ran, and submodules not at all. An added
+  or changed symlink, a submodule, or a `.gitmodules` file is now a hard
+  failure.
 
 ## [0.4.0] - 2026-10-29
 

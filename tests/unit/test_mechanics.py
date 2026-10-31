@@ -169,6 +169,30 @@ def test_entry_point_paths() -> None:
     assert mechanics.entry_point_paths(None) == set()
 
 
+def test_mode_problems() -> None:
+    changes = [
+        change("link", new="120000"),
+        Change("T", "was-a-file", None, "100644", "120000", "b" * 40, False),
+        change("vendor/sub", new="160000"),
+        change(".gitmodules"),
+        change("deep/.gitmodules"),
+        change("line\nbreak", new="120000"),
+        change("Widget.qml"),
+        change("run.sh", new="100755"),
+        Change("D", "old-link", None, "120000", "000000", "0" * 40, False),
+        Change("D", "old-sub", None, "160000", "000000", "0" * 40, False),
+        Change("D", ".gitmodules", None, "100644", "000000", "0" * 40, False),
+    ]
+    assert mechanics.mode_problems(changes) == [
+        "symlink link: plugins may not contain symlinks — needs a human",
+        "symlink was-a-file: plugins may not contain symlinks — needs a human",
+        "submodule vendor/sub: the reviewer cannot see its code — needs a human",
+        ".gitmodules: submodule configuration in the plugin (.gitmodules) — needs a human",
+        "deep/.gitmodules: submodule configuration in the plugin (.gitmodules) — needs a human",
+        "symlink line\\nbreak: plugins may not contain symlinks — needs a human",
+    ]
+
+
 def test_exec_findings() -> None:
     blobs = {"script": b"#!/bin/sh\n", "blob": b"payload"}
     changes = [
@@ -357,6 +381,35 @@ def test_missing_manifest_is_hard(upstream: Upstream, monkeypatch: pytest.Monkey
     result = run_check(upstream, base, new)
     assert any("manifest id changed" in h for h in result.hard)
     assert any("manifest.json is missing or not a JSON object" in h for h in result.hard)
+
+
+def test_symlinks_and_submodules_against_git(
+    upstream: Upstream, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mechanics, "validate_tree", lambda _repo, _rev: None)
+    base = git(upstream.path, "rev-parse", "HEAD")
+    (upstream.path / "link").symlink_to("/etc/passwd")
+    upstream.write(".gitmodules", '[submodule "sub"]\n\tpath = sub\n\turl = https://x/y\n')
+    git(upstream.path, "update-index", "--add", "--cacheinfo", f"160000,{base},sub")
+    # An empty directory keeps `git add -A` from staging the gitlink's removal.
+    (upstream.path / "sub").mkdir()
+    new = upstream.commit()
+    assert run_check(upstream, base, new).hard == [
+        ".gitmodules: submodule configuration in the plugin (.gitmodules) — needs a human",
+        "symlink link: plugins may not contain symlinks — needs a human",
+        "submodule sub: the reviewer cannot see its code — needs a human",
+    ]
+
+
+def test_symlink_in_an_initial_import_is_hard(
+    upstream: Upstream, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(mechanics, "validate_tree", lambda _repo, _rev: None)
+    (upstream.path / "link").symlink_to("Widget.qml")
+    new = upstream.commit()
+    assert run_check(upstream, None, new).hard == [
+        "symlink link: plugins may not contain symlinks — needs a human"
+    ]
 
 
 def test_invalid_id_is_hard_on_an_initial_import(

@@ -147,6 +147,9 @@ held                             the last commit that failed and why
   filter is configured on your machine (`git lfs install` sets one up
   globally), so the files on disk would not be the ones reviewed. The gate's
   own merges and resets ignore the plugin's attributes as well
+- symlinks, submodules and `.gitmodules`: the patch shows a symlink only as
+  its target path and a submodule only as `Subproject commit <sha>`, so the
+  reviewer never sees what they point at
 - a manifest `id` change, or a manifest that can no longer be read
 - a manifest `id` that is not a valid plugin id: letters, digits, `.`, `_` and
   `-`, starting with a letter or digit, no `..`, and not in the reserved

@@ -130,6 +130,25 @@ def binary_problems(
     return hard, found
 
 
+def mode_problems(changes: Iterable[Change]) -> list[str]:
+    """Hard failures for symlinks and submodules, which the patch shows only as
+    a target path or a `Subproject commit` line."""
+    problems: list[str] = []
+    for c in changes:
+        if c.status == "D":
+            continue
+        shown = printable(c.path)
+        if c.new_mode == "120000":
+            problems.append(f"symlink {shown}: plugins may not contain symlinks — needs a human")
+        elif c.new_mode == "160000":
+            problems.append(f"submodule {shown}: the reviewer cannot see its code — needs a human")
+        if posixpath.basename(c.path) == ".gitmodules":
+            problems.append(
+                f"{shown}: submodule configuration in the plugin (.gitmodules) — needs a human"
+            )
+    return problems
+
+
 def exec_findings(changes: Iterable[Change], blob: Callable[[str], bytes | None]) -> list[str]:
     found: list[str] = []
     for c in changes:
@@ -317,6 +336,7 @@ def check(
     hard, found = binary_problems(changes, entry_point_paths(new_manifest), repo.blob)
     result.hard += hard
     result.findings += found
+    result.hard += mode_problems(changes)
     result.findings += path_findings(changes)
     result.findings += exec_findings(changes, repo.blob)
 

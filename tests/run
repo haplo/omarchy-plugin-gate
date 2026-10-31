@@ -300,6 +300,10 @@ case_hard 'binary-entrypoint' 'printf "// \0\n" >> Widget.qml' 'Widget.qml is bi
 case_hard 'elf-asset' 'printf "\177ELF\2\1\1\0" > icon.png' 'icon.png is a native executable or library'
 case_hard 'lfs-filter' 'printf "*.qml filter=lfs -text\n" > .gitattributes' '.gitattributes sets a filter'
 case_hard 'lfsconfig' 'printf "[lfs]\n" > .lfsconfig' 'git-lfs configuration in the plugin (.lfsconfig)'
+case_hard 'symlink' 'ln -s /etc/passwd link' 'symlink link: plugins may not contain symlinks'
+# The empty directory keeps `git add -A` from staging the gitlink's removal.
+case_hard 'submodule' 'mkdir sub && git update-index --add --cacheinfo "160000,$(git rev-parse HEAD),sub"' 'submodule sub: the reviewer cannot see its code'
+case_hard 'gitmodules' 'printf "[submodule \"x\"]\n\tpath = x\n\turl = https://example.invalid/x\n" > .gitmodules' 'submodule configuration in the plugin (.gitmodules)'
 case_hard 'lfs-pointer' 'printf "version https://git-lfs.github.com/spec/v1\noid sha256:%064d\nsize 1\n" 0 > Extra.qml' 'Extra.qml is an LFS pointer'
 reset_upstream "$(ap)"
 
