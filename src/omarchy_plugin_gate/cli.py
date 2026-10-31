@@ -182,7 +182,9 @@ def dispatch(self_path: Path, argv: Sequence[str]) -> int:
             say(__version__)
             return 0
         case "_post-merge":
-            return post_merge.run(_context(self_path, lead), args[0] if args else "")
+            if len(args) != 2:
+                raise GateError("_post-merge needs a plugin name and a directory")
+            return post_merge.run(_context(self_path, lead), args[0], args[1])
         case "_complete":
             # Called on Tab: answer in plain lines, and never print a diagnostic
             # or fail the user's shell, whatever the config says.

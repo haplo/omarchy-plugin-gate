@@ -41,6 +41,14 @@ All notable changes to omarchy-plugin-gate. The format follows
   is an LFS pointer is now a hard failure. The gate's own merges and resets
   also ignore the plugin's attributes, so not even a waived commit runs a
   filter there.
+- The tripwire skipped a pull into the installed copy that changed the
+  manifest id. It worked out which plugin a directory belonged to from the
+  `manifest.json` left by the merge, so a commit with a new id was never
+  reviewed or rolled back. Hooks now name their plugin, and the installed copy
+  is recognised, and disabled on a rollback, by the id in the approved commit.
+  `update` also takes the id from the approved commit when it rolls back.
+  Hooks written by earlier releases are rewritten by the next `check`,
+  `approve`, `update` or `doctor --fix`; until then they only log an error.
 
 ## [0.4.0] - 2026-10-29
 

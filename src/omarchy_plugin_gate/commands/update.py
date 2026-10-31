@@ -8,7 +8,7 @@ from ..hooks import ensure_hooks
 from ..install import install_new
 from ..notify import notify, notify_close
 from ..output import info, say, warn
-from ..plugins import selected_names
+from ..plugins import approved_manifest_id, selected_names
 from . import disable_plugin, installed_sha
 
 
@@ -19,7 +19,7 @@ def _detail(result: proc.Result) -> str:
 def _roll_back(ctx: Context, name: str, installed: Repo, before: str | None) -> None:
     if before:
         installed.ok("reset", "--hard", "--quiet", before, no_attributes=True)
-    disable_plugin(ctx.manifest_id(name))
+    disable_plugin(approved_manifest_id(ctx.clone(name)))
 
 
 def update_one(ctx: Context, name: str, *, first_install: bool) -> bool:

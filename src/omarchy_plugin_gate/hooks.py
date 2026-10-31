@@ -15,41 +15,44 @@ def hook_path(directory: Path) -> Path | None:
     return hooks / "post-merge" if hooks else None
 
 
-def _command(cfg: Config) -> str:
-    """The hook's gate invocation. The root and state are fixed when the hook is
-    written, so the tripwire uses the same paths as the run that installed it."""
+def _exec_line(cfg: Config, name: str) -> str:
+    """The hook's gate invocation. The root, state and plugin name are fixed when
+    the hook is written, so the tripwire uses the same paths as the run that
+    installed it and never has to work out the plugin from the merged files."""
     gate = shlex.quote(str(cfg.self_path))
     root = shlex.quote(str(cfg.root))
     state = shlex.quote(str(cfg.state_root))
-    return f"{gate} --root {root} --state {state} _post-merge"
+    log = shlex.quote(str(cfg.state_root / "hooks.log"))
+    command = f"{gate} --root {root} --state {state} _post-merge {shlex.quote(name)}"
+    return f'exec {command} "$top" >>{log} 2>&1\n'
 
 
 def hook_text(cfg: Config, name: str) -> str:
     state = shlex.quote(str(cfg.state_root))
-    log = shlex.quote(str(cfg.state_root / "hooks.log"))
     return f"""\
 #!/usr/bin/env bash
 # Installed by omarchy-plugin-gate for {printable(name)}. Reviews out-of-band merges.
 top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 mkdir -p {state}
-exec {_command(cfg)} "$top" >>{log} 2>&1
-"""
+{_exec_line(cfg, name)}"""
 
 
-def hook_ok(cfg: Config, directory: Path) -> bool:
-    """Installed, pointing at this binary, and using this root and state."""
+def hook_ok(cfg: Config, directory: Path, name: str) -> bool:
+    """Installed, pointing at this binary, using this root and state, and naming
+    this plugin."""
     path = hook_path(directory)
     if path is None or not path.is_file():
         return False
     try:
-        return _command(cfg) in path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
+    return _exec_line(cfg, name) in text.splitlines(keepends=True)
 
 
 def install_hook(cfg: Config, directory: Path, name: str) -> bool:
     path = hook_path(directory)
-    if path is None:
+    if path is None or printable(name) != name:
         return False
     try:
         write_atomic(path, hook_text(cfg, name))
@@ -61,13 +64,13 @@ def install_hook(cfg: Config, directory: Path, name: str) -> bool:
 
 def ensure_hooks(ctx: Context, name: str) -> None:
     clone = ctx.clone_dir(name)
-    if not hook_ok(ctx.cfg, clone) and not install_hook(ctx.cfg, clone, name):
+    if not hook_ok(ctx.cfg, clone, name) and not install_hook(ctx.cfg, clone, name):
         warn(f"could not install the tripwire in {clone}")
     installed = ctx.installed_dir(name)
     if (
         installed
         and installed.is_dir()
-        and not hook_ok(ctx.cfg, installed)
+        and not hook_ok(ctx.cfg, installed, name)
         and not install_hook(ctx.cfg, installed, name)
     ):
         warn(f"could not install the tripwire in {installed}")

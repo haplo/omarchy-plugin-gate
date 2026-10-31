@@ -70,7 +70,7 @@ def doctor_one(ctx: Context, name: str, fix: bool) -> bool:
     if idir is not None and installed:
         targets.append(("the installed copy", idir))
     for label, directory in targets:
-        if hook_ok(ctx.cfg, directory):
+        if hook_ok(ctx.cfg, directory, name):
             ok(f"tripwire in {label}")
         elif fix:
             if install_hook(ctx.cfg, directory, name):

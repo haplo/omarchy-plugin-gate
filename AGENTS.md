@@ -138,7 +138,10 @@ Unit tests must never reach a real `opencode` or `omarchy`: put a stub first on
   code or run a filter driver on checkout.
 - **Tripwire scope.** The `post-merge` hook reviews only commits reachable from
   upstream and rolls those back; commits authored locally are left alone. The
-  hook is a net, not the gate — do not move primary enforcement into it.
+  hook is a net, not the gate — do not move primary enforcement into it. The
+  hook passes its plugin name, and the tripwire takes the installed copy's id
+  from the approved commit (`plugins.approved_manifest_id`); never work out
+  the plugin or its id from the merged working tree.
 - **Evidence is written before decisions are made.** `patch`, `patch.review`,
   `mech.txt`, `findings.txt`, `hints.txt`, `review.txt`, `verdict`, and (for passes that
   cleared findings) `cleared` under

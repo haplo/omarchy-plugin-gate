@@ -244,6 +244,12 @@ copy. If a merge did not come through the gate (a manual `git pull`, say), the
 hook reviews the incoming commits and, on failure, resets them and disables the
 plugin. Commits you authored yourself are never reviewed or rolled back.
 
+Each hook names its plugin, and the installed copy is recognised by the id in
+the approved commit, so a merge cannot hide from the hook by changing the
+manifest id. Hooks written by earlier releases did not name their plugin;
+`check`, `approve` and `update` rewrite them, and `doctor --fix` does too.
+Until then, such a hook only logs an error to `hooks.log`.
+
 This is a net, not the main gate: `omarchy-shell` may already have rescanned by
 the time a hook finishes. The gate is what prevents bad code from arriving.
 
@@ -289,7 +295,7 @@ reads the same file.
 Tripwire hooks record the root and state of the run that installed them, so a
 merge reviewed by the hook uses the same clones and evidence directory whatever
 the environment of the `git pull`. `check`, `approve` and `update` rewrite
-hooks that record a different root or state; `doctor` reports them and
+hooks that record a different root, state or plugin; `doctor` reports them and
 `doctor --fix` rewrites them.
 
 Re-run `mise run install` after pulling a change to the reviewer agent;

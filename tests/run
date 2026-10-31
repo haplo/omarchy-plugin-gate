@@ -452,6 +452,20 @@ OMARCHY_PLUGIN_GATE_ROOT=$B/nowhere OMARCHY_PLUGIN_GATE_STATE=$B/wrong-state \
 eq 'clean pull kept' "$(git -C "$B/root/demo" rev-parse HEAD)" "$good"
 [[ -f "$B/state/demo/reviewed/$good" ]] && ok 'hook wrote a marker in its recorded state' || no 'hook wrote a marker in its recorded state'
 [[ ! -e "$B/wrong-state" ]] && ok 'hook ignores the environment paths' || no 'hook ignores the environment paths'
+has "$idir/.git/hooks/post-merge" '_post-merge demo "$top"' 'hook names its plugin'
+base=$(ap)
+reset_upstream "$base"
+commit_upstream 'jq ".id = \"selftest.other\"" manifest.json > m && mv m manifest.json' 'change the id'
+git -C "$B/root/demo" fetch -q origin
+renamed=$(upstream_sha)
+before=$(git -C "$idir" rev-parse HEAD)
+: >"$OMARCHY_LOG"
+n0=$(invocations)
+bash -c "cd '$idir' && git pull -q --ff-only origin refs/remotes/origin/main" >/dev/null 2>&1
+eq 'id change: installed copy rolled back' "$(git -C "$idir" rev-parse HEAD)" "$before"
+has "$B/state/demo/reviews/${renamed:0:12}/verdict" 'manifest id changed' 'id change: reviewed by the hook'
+eq 'id change: reviewer skipped' "$(invocations)" "$n0"
+has "$OMARCHY_LOG" 'plugin disable selftest.demo' 'id change: approved id disabled'
 
 printf '\n== notifications ==\n'
 export OMARCHY_PLUGIN_GATE_NOTIFY=all
