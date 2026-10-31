@@ -79,6 +79,90 @@ def test_assets(path: str, asset: bool) -> None:
 
 
 @pytest.mark.parametrize(
+    ("path", "code"),
+    [
+        ("Widget.qml", True),
+        ("lib/util.MJS", True),
+        ("run.sh", True),
+        ("manifest.json", True),
+        ("units/x.service", True),
+        ("qmldir", True),
+        ("sub/qmldir", True),
+        ("icon.png", False),
+        ("payload.bin", False),
+        ("qmldir.txt", False),
+        ("notes.qml.png", False),
+    ],
+)
+def test_code_paths(path: str, code: bool) -> None:
+    assert patterns.is_code_path(path) is code
+
+
+@pytest.mark.parametrize(
+    ("path", "native"),
+    [
+        ("libfoo.so", True),
+        ("lib/libfoo.so.6.2", True),
+        ("addon.node", True),
+        ("x.DLL", True),
+        ("x.dylib", True),
+        ("sound.ogg", False),
+        ("so.qml", False),
+        ("libfoo.so.txt", False),
+        ("x.nodes", False),
+    ],
+)
+def test_native_paths(path: str, native: bool) -> None:
+    assert patterns.is_native_path(path) is native
+
+
+@pytest.mark.parametrize(
+    ("path", "head"),
+    [
+        ("a.png", b"\x89PNG\r\n\x1a\n\x00\x00"),
+        ("a.JPG", b"\xff\xd8\xff\xe0"),
+        ("a.jpeg", b"\xff\xd8\xff\xdb"),
+        ("a.gif", b"GIF87a\x01\x00"),
+        ("a.gif", b"GIF89a\x01\x00"),
+        ("a.webp", b"RIFF\x24\x00\x00\x00WEBPVP8 "),
+        ("a.ico", b"\x00\x00\x01\x00\x01\x00"),
+        ("a.avif", b"\x00\x00\x00\x1cftypavif"),
+        ("a.avif", b"\x00\x00\x00\x1cftypavis"),
+        ("a.bmp", b"BM\x36\x00"),
+        ("a.woff", b"wOFF\x00\x01"),
+        ("a.woff2", b"wOF2\x00\x01"),
+        ("a.ttf", b"\x00\x01\x00\x00\x00\x10"),
+        ("a.ttf", b"true\x00\x10"),
+        ("a.ttf", b"OTTO\x00\x10"),
+    ],
+)
+def test_asset_matches(path: str, head: bytes) -> None:
+    assert patterns.asset_matches(path, head)
+
+
+@pytest.mark.parametrize(
+    ("path", "head"),
+    [
+        ("a.png", b"\x7fELF\x02\x01\x01\x00"),
+        ("a.png", b"GIF89a\x01\x00"),
+        ("a.jpg", b"\xff\xd8\x00"),
+        ("a.gif", b"GIF88a"),
+        ("a.webp", b"RIFF\x24\x00\x00\x00WAVEfmt "),
+        ("a.ico", b"\x00\x00\x02\x00"),
+        ("a.avif", b"\x00\x00\x00\x1cftypheic"),
+        ("a.bmp", b"MB"),
+        ("a.woff", b"wOF2"),
+        ("a.woff2", b"wOFF"),
+        ("a.ttf", b"ttcf"),
+        ("a.png", b""),
+        ("payload.bin", b"\x89PNG\r\n\x1a\n"),
+    ],
+)
+def test_asset_mismatches(path: str, head: bytes) -> None:
+    assert not patterns.asset_matches(path, head)
+
+
+@pytest.mark.parametrize(
     ("ep", "escapes"),
     [
         ("/etc/passwd", True),

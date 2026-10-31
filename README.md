@@ -134,6 +134,12 @@ held                             the last commit that failed and why
   full
 - diffs that are not valid UTF-8, which OpenCode would not hand to the reviewer
   as text; the offending files are named
+- files git treats as binary (a single NUL byte is enough) that the reviewer
+  would see only as "Binary files differ" although they are code: a code
+  suffix (`.qml`, `.js`, `.sh`, `.py`, `.json`, `.desktop`, …) or a `qmldir`,
+  an entry point, or an executable
+- native code: an ELF file under any name, or a `.so`, `.node`, `.dll` or
+  `.dylib`
 - a manifest `id` change, or a manifest that can no longer be read
 - `manifest.json` that does not validate at the candidate commit
 - entry points that escape the plugin directory or name a file missing from the
@@ -144,7 +150,10 @@ held                             the last commit that failed and why
 are numbered `F1`, `F2`, …, printed one per line before the review starts, and
 handed to the reviewer with the patch:
 
-- binary files outside common asset types
+- binary files outside common asset types (PNG, JPEG, GIF, WebP, ICO, AVIF,
+  BMP, WOFF, WOFF2, TTF)
+- asset files whose contents do not start the way their type does, such as a
+  `.png` that is not a PNG image
 - `.git/`, `.ssh/`, `authorized_keys`, `sudoers`, `systemd/`, `omarchy/hooks`,
   `*.service`, `*.timer`, `*.socket`, `*.path`, `*.desktop`, `*.pem`, `*.key`,
   `*.p12`

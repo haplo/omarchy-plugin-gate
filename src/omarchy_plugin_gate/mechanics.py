@@ -1,14 +1,16 @@
 """Structural checks, in two tiers.
 
-Hard failures are things the model cannot judge (a patch too large or not text)
-or that break the gate's own bookkeeping (manifest identity, loadability); they
-are a REVIEW FAIL with no model call. Findings are pattern matches that are
-usually, but not always, a problem; they go to the reviewer numbered F1..Fn and
-each must be explicitly cleared. Keyword hits go to the reviewer as plain hints.
+Hard failures are things the model cannot judge (a patch too large or not text,
+code git shows only as binary) or that break the gate's own bookkeeping
+(manifest identity, loadability); they are a REVIEW FAIL with no model call.
+Findings are pattern matches that are usually, but not always, a problem; they
+go to the reviewer numbered F1..Fn and each must be explicitly cleared. Keyword
+hits go to the reviewer as plain hints.
 """
 
 import io
 import json
+import posixpath
 import tarfile
 import tempfile
 from collections import Counter
@@ -93,14 +95,39 @@ def utf8_problem(patch: bytes) -> str | None:
 
 
 def path_findings(changes: Iterable[Change]) -> list[str]:
+    return [
+        f"plugin touches a path it has no business touching: {printable(c.path)}"
+        for c in changes
+        if patterns.is_denied(c.path)
+    ]
+
+
+def binary_problems(
+    changes: Iterable[Change], entry_points: set[str], blob: Callable[[str], bytes | None]
+) -> tuple[list[str], list[str]]:
+    """(hard failures, findings) for files git treats as binary.
+
+    The patch shows such a file as "Binary files differ", so the reviewer never
+    sees its contents. Code, native libraries, entry points and executables are
+    hard failures; an asset whose contents do not match its type, and any other
+    binary, are findings.
+    """
+    hard: list[str] = []
     found: list[str] = []
     for c in changes:
+        if c.status == "D" or not c.binary:
+            continue
         shown = printable(c.path)
-        if c.binary and not patterns.is_known_asset(c.path):
+        head = (blob(c.new_blob) or b"")[:16]
+        if head.startswith(b"\x7fELF") or patterns.is_native_path(c.path):
+            hard.append(f"{shown} is a native executable or library — needs a human")
+        elif patterns.is_code_path(c.path) or c.path in entry_points or c.new_mode == "100755":
+            hard.append(f"{shown} is binary to git, so the reviewer cannot read it — needs a human")
+        elif not patterns.is_known_asset(c.path):
             found.append(f"binary file added or changed outside a known asset type: {shown}")
-        if patterns.is_denied(c.path):
-            found.append(f"plugin touches a path it has no business touching: {shown}")
-    return found
+        elif not patterns.asset_matches(c.path, head):
+            found.append(f"asset file does not look like its type: {shown}")
+    return hard, found
 
 
 def exec_findings(changes: Iterable[Change], blob: Callable[[str], bytes | None]) -> list[str]:
@@ -145,6 +172,14 @@ def manifest_change(
     if a != b:
         found.append(f"manifest kinds/entryPoints changed: {a} -> {b}")
     return hard, found
+
+
+def entry_point_paths(manifest: dict[str, Any] | None) -> set[str]:
+    """The files the manifest's entry points name, as paths in the tree."""
+    eps = manifest.get("entryPoints") if manifest is not None else None
+    if not isinstance(eps, dict):
+        return set()
+    return {posixpath.normpath(v) for v in eps.values() if isinstance(v, str) and v}
 
 
 def entry_point_problems(manifest: dict[str, Any], exists: Callable[[str], bool]) -> list[str]:
@@ -220,12 +255,16 @@ def check(
     if problem := utf8_problem(patch):
         result.hard.append(problem)
 
+    new_raw = repo.blob(f"{new}:manifest.json")
+    new_manifest = parse_manifest(new_raw)
+
     changes = repo.changes(base, new)
+    hard, found = binary_problems(changes, entry_point_paths(new_manifest), repo.blob)
+    result.hard += hard
+    result.findings += found
     result.findings += path_findings(changes)
     result.findings += exec_findings(changes, repo.blob)
 
-    new_raw = repo.blob(f"{new}:manifest.json")
-    new_manifest = parse_manifest(new_raw)
     if old:
         old_raw = repo.blob(f"{old}:manifest.json")
         if old_raw != new_raw:

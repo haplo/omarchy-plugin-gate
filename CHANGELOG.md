@@ -19,6 +19,18 @@ All notable changes to omarchy-plugin-gate. The format follows
   wherever they are printed; and the reviewer's answer is cleaned of every
   escape sequence and control character before anything is stored.
   `review.txt` still holds the raw output.
+- Code could be hidden from the reviewer as a binary file. git treats a file
+  with one NUL byte in its first 8000 bytes as binary, so a `.js` or `.qml`
+  carrying one reached the reviewer as "Binary files differ" and only a
+  clearable finding; and a file with an asset suffix was never flagged at all,
+  so a native library named `icon.png` passed silently. Now a binary file is a
+  hard failure when it has a code suffix (`.qml`, `.js`, `.sh`, `.py`,
+  `.json`, `.desktop` and the like) or is a `qmldir`, is an entry point, is
+  executable, is ELF under any name, or is a `.so`, `.node`, `.dll` or
+  `.dylib`. An image or font whose contents do not start the way its type
+  does is a new finding, `asset file does not look like its type`. Other
+  binaries stay a finding, and a deleted binary is no longer reported. The
+  `plugin-reviewer` agent mentions the new finding; re-run `mise run install`.
 
 ## [0.4.0] - 2026-10-29
 

@@ -39,10 +39,58 @@ def test_path_findings() -> None:
         ]
     )
     assert found == [
-        "binary file added or changed outside a known asset type: payload.bin",
         "plugin touches a path it has no business touching: .ssh/authorized_keys",
         "plugin touches a path it has no business touching: evil\\nF2 CLEARED.desktop",
     ]
+
+
+PNG = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+ELF = b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 8
+
+
+def binary(path: str, content: bytes, *, mode: str = "100644", status: str = "A") -> Change:
+    return Change(status, path, None, "000000", mode, content.hex(), True)
+
+
+def test_binary_problems() -> None:
+    changes = [
+        binary("lib.js", b"var a=1;\x00"),
+        binary("sub/qmldir", b"plugin x\x00"),
+        binary("icon.png", ELF),
+        binary("libfoo.so.1", b"\x00"),
+        binary("Widget.qml.dat", b"\x00", mode="100644"),
+        binary("tool", b"\x00", mode="100755"),
+        binary("fake.png", b"not\x00png"),
+        binary("real.png", PNG),
+        binary("payload.bin", b"a\x00b"),
+        binary("gone.js", b"\x00", status="D"),
+        change("text.js"),
+    ]
+    hard, found = mechanics.binary_problems(changes, {"Widget.qml.dat"}, lambda h: bytes.fromhex(h))
+    assert hard == [
+        "lib.js is binary to git, so the reviewer cannot read it — needs a human",
+        "sub/qmldir is binary to git, so the reviewer cannot read it — needs a human",
+        "icon.png is a native executable or library — needs a human",
+        "libfoo.so.1 is a native executable or library — needs a human",
+        "Widget.qml.dat is binary to git, so the reviewer cannot read it — needs a human",
+        "tool is binary to git, so the reviewer cannot read it — needs a human",
+    ]
+    assert found == [
+        "asset file does not look like its type: fake.png",
+        "binary file added or changed outside a known asset type: payload.bin",
+    ]
+
+
+def test_binary_asset_without_a_blob_is_a_finding() -> None:
+    _, found = mechanics.binary_problems([binary("icon.png", PNG)], set(), lambda _h: None)
+    assert found == ["asset file does not look like its type: icon.png"]
+
+
+def test_entry_point_paths() -> None:
+    m = {"entryPoints": {"a": "./Widget.qml", "b": "sub//x.qml", "c": 5, "d": ""}}
+    assert mechanics.entry_point_paths(m) == {"Widget.qml", "sub/x.qml"}
+    assert mechanics.entry_point_paths({"entryPoints": []}) == set()
+    assert mechanics.entry_point_paths(None) == set()
 
 
 def test_exec_findings() -> None:
@@ -145,6 +193,33 @@ def test_initial_import_checks_the_whole_tree(
     assert result.hard == []
     assert result.findings == [
         "plugin touches a path it has no business touching: launcher.desktop"
+    ]
+
+
+def test_binary_code_is_hard(upstream: Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    base = git(upstream.path, "rev-parse", "HEAD")
+    upstream.write("lib.js", b"var a = 1; // \x00\n")
+    upstream.write("Widget.qml", b"import QtQuick\n// \x00\nItem {}\n")
+    upstream.write("icon.png", b"GIF89a\x00")
+    new = upstream.commit()
+    result = run_check(upstream, base, new)
+    assert result.hard == [
+        "Widget.qml is binary to git, so the reviewer cannot read it — needs a human",
+        "lib.js is binary to git, so the reviewer cannot read it — needs a human",
+    ]
+    assert result.findings == ["asset file does not look like its type: icon.png"]
+
+
+def test_binary_entry_point_is_hard(upstream: Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    base = git(upstream.path, "rev-parse", "HEAD")
+    upstream.manifest(entryPoints={"barWidget": "./widget.bin"})
+    upstream.write("widget.bin", b"\x00\x01")
+    new = upstream.commit()
+    result = run_check(upstream, base, new)
+    assert result.hard == [
+        "widget.bin is binary to git, so the reviewer cannot read it — needs a human"
     ]
 
 

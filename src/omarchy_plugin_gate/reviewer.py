@@ -96,6 +96,7 @@ Files changed:
 {"\n".join(ctx.stat)}
 
 Hard structural checks: PASS (patch within the size limit and valid UTF-8,
+no code, entry point, executable or native library hidden as a binary file,
 manifest id unchanged, manifest valid, entry points inside the plugin and
 present).
 {findings}

@@ -104,9 +104,13 @@ Unit tests must never reach a real `opencode` or `omarchy`: put a stub first on
 - **Hard structural failures never reach the model.** `mechanics.check` runs
   first; tests assert the stub reviewer is not invoked for those cases. Only
   checks the model cannot judge or that protect the gate's own bookkeeping
-  (patch size, UTF-8 encoding, manifest id, validity, entry points, finding
-  count, an unreadable manifest) are hard. A patch that is not valid UTF-8 is never attached as text by
-  OpenCode, so the reviewer would see no code at all.
+  (patch size, UTF-8 encoding, binary code, native code, manifest id,
+  validity, entry points, finding count, an unreadable manifest) are hard. A
+  patch that is not valid UTF-8 is never attached as text by OpenCode, so the
+  reviewer would see no code at all; a file git treats as binary reaches it as
+  "Binary files differ", so a binary with a code suffix or name, an entry
+  point, an executable, or ELF/native library is hard, while other binaries
+  and assets whose contents do not match their type are findings.
 - **Every structural finding must be explicitly cleared.** Softer checks become
   numbered findings in the prompt. A `REVIEW PASS` counts only if each finding
   has exactly one `Fn CLEARED <reason>` line; missing, duplicate, `CONFIRMED`,
