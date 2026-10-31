@@ -104,13 +104,16 @@ Unit tests must never reach a real `opencode` or `omarchy`: put a stub first on
 - **Hard structural failures never reach the model.** `mechanics.check` runs
   first; tests assert the stub reviewer is not invoked for those cases. Only
   checks the model cannot judge or that protect the gate's own bookkeeping
-  (patch size, UTF-8 encoding, binary code, native code, manifest id,
-  validity, entry points, finding count, an unreadable manifest) are hard. A
-  patch that is not valid UTF-8 is never attached as text by OpenCode, so the
-  reviewer would see no code at all; a file git treats as binary reaches it as
-  "Binary files differ", so a binary with a code suffix or name, an entry
-  point, an executable, or ELF/native library is hard, while other binaries
-  and assets whose contents do not match their type are findings.
+  (patch size, UTF-8 encoding, binary code, native code, checkout filters and
+  LFS, manifest id, validity, entry points, finding count, an unreadable
+  manifest) are hard. A patch that is not valid UTF-8 is never attached as
+  text by OpenCode, so the reviewer would see no code at all; a file git
+  treats as binary reaches it as "Binary files differ", so a binary with a code
+  suffix or name, an entry point, an executable, or ELF/native library is
+  hard, while other binaries and assets whose contents do not match their type
+  are findings. A `filter` attribute anywhere in the tree, a `.lfsconfig`, or
+  a changed LFS pointer is hard because a checkout would write something other
+  than the reviewed blob.
 - **Every structural finding must be explicitly cleared.** Softer checks become
   numbered findings in the prompt. A `REVIEW PASS` counts only if each finding
   has exactly one `Fn CLEARED <reason>` line; missing, duplicate, `CONFIRMED`,
@@ -128,7 +131,11 @@ Unit tests must never reach a real `opencode` or `omarchy`: put a stub first on
   directory (`reviews/<short-sha>/`), never the plugin checkout, and pass
   `patch.review` with `--file`. A hostile `.opencode/` or `AGENTS.md` in the
   diff must not be loadable. Keep the agent's permissions deny-by-default, with
-  reads, globs and greps confined to its working directory.
+  reads, globs and greps confined to its working directory. The plugin's
+  `.gitattributes` is refused or ignored, never trusted: diffs, archives and
+  the gate's own merges and resets run with `no_attributes=True`
+  (`GIT_ATTR_SOURCE` set to the empty tree), so no plugin attribute can hide
+  code or run a filter driver on checkout.
 - **Tripwire scope.** The `post-merge` hook reviews only commits reachable from
   upstream and rolls those back; commits authored locally are left alone. The
   hook is a net, not the gate — do not move primary enforcement into it.

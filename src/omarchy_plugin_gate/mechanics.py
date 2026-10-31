@@ -144,6 +144,52 @@ def exec_findings(changes: Iterable[Change], blob: Callable[[str], bytes | None]
     return found
 
 
+def attribute_problems(files: dict[str, bytes | None]) -> list[str]:
+    """Hard failures for .gitattributes files (path -> contents) that set a filter.
+
+    The patch shows the committed blob, but every checkout runs the filter
+    configured on the machine (`git lfs install` sets one up globally), so the
+    files on disk would not be the files that were reviewed.
+    """
+    problems: list[str] = []
+    for path, content in files.items():
+        shown = printable(path)
+        if content is None:
+            problems.append(f"{shown} could not be read — needs a human")
+            continue
+        for raw in content.split(b"\n"):
+            line = raw.strip(b" \t\r")
+            if line and not line.startswith(b"#") and patterns.ATTR_FILTER.search(line):
+                text = printable(line.decode("utf-8", "replace"))[:200]
+                problems.append(
+                    f".gitattributes sets a filter ({shown}: {text}) — checked-out content "
+                    "would differ from the reviewed patch; needs a human"
+                )
+                break
+    return problems
+
+
+def lfsconfig_problems(paths: Iterable[str]) -> list[str]:
+    return [
+        f"{printable(p)}: git-lfs configuration in the plugin (.lfsconfig) — needs a human"
+        for p in paths
+        if posixpath.basename(p) == ".lfsconfig"
+    ]
+
+
+def lfs_pointer_problems(
+    changes: Iterable[Change], small_blob: Callable[[str], bytes | None]
+) -> list[str]:
+    """Changed files that are Git LFS pointers. `small_blob` returns the contents
+    of a blob of at most LFS_POINTER_MAX bytes, None for anything larger."""
+    return [
+        f"{printable(c.path)} is an LFS pointer; the reviewer would see the pointer, "
+        "not the file — needs a human"
+        for c in changes
+        if c.status != "D" and patterns.LFS_POINTER.match(small_blob(c.new_blob) or b"")
+    ]
+
+
 def _compact(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
@@ -264,6 +310,22 @@ def check(
     result.findings += found
     result.findings += path_findings(changes)
     result.findings += exec_findings(changes, repo.blob)
+
+    # Attributes apply across the whole tree: one added earlier can match a
+    # file added now.
+    paths = repo.tree_paths(new)
+    attributes = {
+        p: repo.blob(f"{new}:{p}") for p in paths if posixpath.basename(p) == ".gitattributes"
+    }
+    result.hard += attribute_problems(attributes)
+    result.hard += lfsconfig_problems(paths)
+    sizes = repo.blob_sizes(c.new_blob for c in changes if c.status != "D")
+
+    def small_blob(sha: str) -> bytes | None:
+        size = sizes.get(sha)
+        return repo.blob(sha) if size is not None and size <= patterns.LFS_POINTER_MAX else None
+
+    result.hard += lfs_pointer_problems(changes, small_blob)
 
     if old:
         old_raw = repo.blob(f"{old}:manifest.json")

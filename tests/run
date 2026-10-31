@@ -296,6 +296,9 @@ case_hard 'not-utf8' 'printf "// caf\xe9\n" >> Widget.qml' 'not valid UTF-8, so 
 case_hard 'binary-js' 'printf "var a=1;\0\n" > lib.js' 'lib.js is binary to git'
 case_hard 'binary-entrypoint' 'printf "// \0\n" >> Widget.qml' 'Widget.qml is binary to git'
 case_hard 'elf-asset' 'printf "\177ELF\2\1\1\0" > icon.png' 'icon.png is a native executable or library'
+case_hard 'lfs-filter' 'printf "*.qml filter=lfs -text\n" > .gitattributes' '.gitattributes sets a filter'
+case_hard 'lfsconfig' 'printf "[lfs]\n" > .lfsconfig' 'git-lfs configuration in the plugin (.lfsconfig)'
+case_hard 'lfs-pointer' 'printf "version https://git-lfs.github.com/spec/v1\noid sha256:%064d\nsize 1\n" 0 > Extra.qml' 'Extra.qml is an LFS pointer'
 reset_upstream "$(ap)"
 
 printf '\n== default patch limit ==\n'
@@ -540,6 +543,26 @@ has <(printf '%s' "$out") '\x1b]52;c;ZXZpbA==\x07' 'escape: approve --show escap
 out=$("$GATE" status -p demo 2>&1)
 eq 'escape: status prints no ESC' "$(grep -c $'\x1b' <<<"$out")" 0
 reset_upstream "$base"
+
+printf '\n== the gate never runs filters on its checkouts ==\n'
+base=$(ap)
+reset_upstream "$base"
+commit_upstream 'printf "*.qml filter=evil\n" > .gitattributes && printf "// reviewed\n" >> Widget.qml' 'waived filter'
+# Configured only now, so the upstream's own checkouts above stay unfiltered.
+git config --global filter.evil.smudge 'sed s/reviewed/SMUDGED/'
+git config --global filter.evil.clean cat
+"$GATE" check -p demo >/dev/null 2>&1
+filtered=$(upstream_sha)
+eq 'filter: held' "$(head -1 "$B/state/demo/held")" "$filtered"
+"$GATE" approve demo --reason "filter checked by hand" >/dev/null 2>&1
+eq 'filter: waived' "$(ap)" "$filtered"
+"$GATE" update -p demo >/dev/null 2>&1
+eq 'filter: installed' "$(git -C "$idir" rev-parse HEAD)" "$filtered"
+has "$idir/Widget.qml" '// reviewed' 'filter: installed file is the reviewed blob'
+git config --global --remove-section filter.evil
+commit_upstream 'git rm -q .gitattributes' 'drop the filter'
+"$GATE" check -p demo >/dev/null 2>&1
+eq 'filter: dropping it passes review' "$(ap)" "$(upstream_sha)"
 
 printf '\n== add ==\n'
 : >"$OMARCHY_LOG"

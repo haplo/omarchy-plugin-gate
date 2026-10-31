@@ -31,6 +31,16 @@ All notable changes to omarchy-plugin-gate. The format follows
   does is a new finding, `asset file does not look like its type`. Other
   binaries stay a finding, and a deleted binary is no longer reported. The
   `plugin-reviewer` agent mentions the new finding; re-run `mise run install`.
+- Git LFS and other filter drivers could put unreviewed content on disk. The
+  reviewer sees the committed blob, which for an LFS-tracked file is a
+  three-line pointer, but every checkout (`omarchy plugin add` and `update`,
+  and the gate's own merges and resets) reads the plugin's `.gitattributes`
+  and, with `git lfs install` or any other filter configured on the machine,
+  writes whatever the filter returns. A `.gitattributes` anywhere in the
+  candidate tree that sets a `filter`, a `.lfsconfig`, or a changed file that
+  is an LFS pointer is now a hard failure. The gate's own merges and resets
+  also ignore the plugin's attributes, so not even a waived commit runs a
+  filter there.
 
 ## [0.4.0] - 2026-10-29
 

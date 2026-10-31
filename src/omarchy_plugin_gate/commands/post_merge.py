@@ -37,7 +37,7 @@ def run(ctx: Context, directory: str) -> int:
         ctx.state.set_marker(name, new, "hook review")
         return 0
 
-    repo.ok("reset", "--hard", "--quiet", old)
+    repo.ok("reset", "--hard", "--quiet", old, no_attributes=True)
     plugin_id = ctx.manifest_id(name)
     if plugin_id and same_path(target, ctx.cfg.installed_root / plugin_id):
         disable_plugin(plugin_id)

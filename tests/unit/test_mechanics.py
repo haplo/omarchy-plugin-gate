@@ -86,6 +86,82 @@ def test_binary_asset_without_a_blob_is_a_finding() -> None:
     assert found == ["asset file does not look like its type: icon.png"]
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        b"*.qml filter=lfs diff=lfs merge=lfs -text",
+        b"*.qml\tfilter",
+        b"  *.js  -text filter=x  ",
+        b'"a b.qml"filter=lfs',
+        b"[attr]lfs filter=lfs diff=lfs merge=lfs -text",
+        b"*.qml filter=lfs\r",
+    ],
+)
+def test_attribute_filter_is_hard(line: bytes) -> None:
+    problems = mechanics.attribute_problems({"sub/.gitattributes": b"# notes\n" + line + b"\n"})
+    assert len(problems) == 1
+    assert problems[0].startswith(".gitattributes sets a filter (sub/.gitattributes: ")
+    assert problems[0].endswith(
+        "— checked-out content would differ from the reviewed patch; needs a human"
+    )
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"* -filter\n",
+        b"*.qml !filter\n",
+        b"# *.qml filter=lfs\n",
+        b"   # *.qml filter=lfs\n",
+        b"*.qml filterx=1 myfilter=2 diff\n",
+        b"*.qml text eol=lf\n",
+        b"",
+    ],
+)
+def test_attributes_without_a_filter_pass(content: bytes) -> None:
+    assert mechanics.attribute_problems({".gitattributes": content}) == []
+
+
+def test_attribute_problems_one_per_file_and_unreadable() -> None:
+    problems = mechanics.attribute_problems(
+        {".gitattributes": b"*.a filter=x\n*.b filter=y\n", "x\n/.gitattributes": None}
+    )
+    assert problems == [
+        ".gitattributes sets a filter (.gitattributes: *.a filter=x) — checked-out content "
+        "would differ from the reviewed patch; needs a human",
+        "x\\n/.gitattributes could not be read — needs a human",
+    ]
+
+
+def test_lfsconfig_is_hard() -> None:
+    assert mechanics.lfsconfig_problems([".lfsconfig", "sub/.lfsconfig", "lfsconfig.md"]) == [
+        ".lfsconfig: git-lfs configuration in the plugin (.lfsconfig) — needs a human",
+        "sub/.lfsconfig: git-lfs configuration in the plugin (.lfsconfig) — needs a human",
+    ]
+
+
+def test_lfs_pointer_is_hard() -> None:
+    pointer = b"version https://git-lfs.github.com/spec/v1\noid sha256:" + b"0" * 64 + b"\nsize 1\n"
+    blobs = {
+        "pointer": pointer,
+        "legacy": b"version https://hawser.github.com/spec/v1\noid sha256:0\nsize 1\n",
+        "quoted": b"// version https://git-lfs.github.com/spec/v1\n",
+    }
+    changes = [
+        Change("A", "Extra.qml", None, "000000", "100644", "pointer", False),
+        Change("A", "old.qml", None, "000000", "100644", "legacy", False),
+        Change("A", "doc.qml", None, "000000", "100644", "quoted", False),
+        Change("A", "big.qml", None, "000000", "100644", "too-big", False),
+        Change("D", "gone.qml", None, "100644", "000000", "pointer", False),
+    ]
+    assert mechanics.lfs_pointer_problems(changes, blobs.get) == [
+        "Extra.qml is an LFS pointer; the reviewer would see the pointer, not the file "
+        "— needs a human",
+        "old.qml is an LFS pointer; the reviewer would see the pointer, not the file "
+        "— needs a human",
+    ]
+
+
 def test_entry_point_paths() -> None:
     m = {"entryPoints": {"a": "./Widget.qml", "b": "sub//x.qml", "c": 5, "d": ""}}
     assert mechanics.entry_point_paths(m) == {"Widget.qml", "sub/x.qml"}
@@ -220,6 +296,40 @@ def test_binary_entry_point_is_hard(upstream: Upstream, monkeypatch: pytest.Monk
     result = run_check(upstream, base, new)
     assert result.hard == [
         "widget.bin is binary to git, so the reviewer cannot read it — needs a human"
+    ]
+
+
+def test_filter_attributes_anywhere_in_the_tree_are_hard(
+    upstream: Upstream, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An attribute file added by an earlier commit still applies to a file
+    # added now, so the whole candidate tree is checked, not just the diff.
+    monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    upstream.write("sub/.gitattributes", "*.qml filter=lfs -text\n")
+    base = upstream.commit("attributes")
+    upstream.write("sub/Extra.qml", "import QtQuick\nItem {}\n")
+    new = upstream.commit("new file")
+    result = run_check(upstream, base, new)
+    assert result.hard == [
+        ".gitattributes sets a filter (sub/.gitattributes: *.qml filter=lfs -text) — "
+        "checked-out content would differ from the reviewed patch; needs a human"
+    ]
+
+
+def test_lfs_pointer_against_git(upstream: Upstream, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mechanics.proc, "which", lambda _name: None)
+    base = git(upstream.path, "rev-parse", "HEAD")
+    upstream.write(
+        "Extra.qml", "version https://git-lfs.github.com/spec/v1\noid sha256:0\nsize 1\n"
+    )
+    upstream.write("Big.qml", "version https://git-lfs.github.com/spec/v1\n" + "x" * 2000)
+    upstream.write(".lfsconfig", "[lfs]\n")
+    new = upstream.commit()
+    result = run_check(upstream, base, new)
+    assert result.hard == [
+        ".lfsconfig: git-lfs configuration in the plugin (.lfsconfig) — needs a human",
+        "Extra.qml is an LFS pointer; the reviewer would see the pointer, not the file "
+        "— needs a human",
     ]
 
 

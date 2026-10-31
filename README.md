@@ -140,6 +140,12 @@ held                             the last commit that failed and why
   an entry point, or an executable
 - native code: an ELF file under any name, or a `.so`, `.node`, `.dll` or
   `.dylib`
+- a `.gitattributes` anywhere in the candidate tree that sets a `filter` (Git
+  LFS sets `filter=lfs`), a `.lfsconfig`, or a changed file that is an LFS
+  pointer. The patch shows the committed blob, but a checkout runs whatever
+  filter is configured on your machine (`git lfs install` sets one up
+  globally), so the files on disk would not be the ones reviewed. The gate's
+  own merges and resets ignore the plugin's attributes as well
 - a manifest `id` change, or a manifest that can no longer be read
 - `manifest.json` that does not validate at the candidate commit
 - entry points that escape the plugin directory or name a file missing from the

@@ -30,6 +30,20 @@ HINT_RE = re.compile(
     r"|/etc/|api[_ -]?key|token|secret|password|\.env\b|ssh|gpg|keyring"
 )
 
+# A `filter` attribute being set (`filter`, `filter=lfs`) in a .gitattributes
+# line, as git separates states: by blanks, or right after a quoted pattern.
+# `-filter` and `!filter` unset it. A pattern that is itself named `filter`
+# matches too; that only fails closed.
+ATTR_FILTER = re.compile(rb'(^|[\s"])filter(=|\s|$)')
+
+# The first line of a Git LFS pointer file, including the older spec URLs
+# git-lfs still accepts.
+LFS_POINTER = re.compile(
+    rb"version (https://git-lfs\.github\.com/spec/v1|https://hawser\.github\.com/spec/v1"
+    rb"|http://git-media\.io/v/2)"
+)
+LFS_POINTER_MAX = 1024
+
 # What each asset type's contents start with. A file with an asset suffix and
 # other contents is not the image or font its name claims.
 ASSET_MAGIC: dict[str, re.Pattern[bytes]] = {
